@@ -33,6 +33,14 @@ integrations/.venv/bin/python integrations/server.py --open
 
 官方源码会放在 `integrations/Kimi-Vendor-Verifier/`，固定版本记录在 [integrations/SOURCE.json](integrations/SOURCE.json)。安装脚本不会自动切换或覆盖已有的不同版本及修改过的素材，也不会下载未使用的 BEAM 大型数据集。
 
+服务器只运行网页中的 CCMax 与 KVV API 验证时，可以将上述完整依赖安装命令替换为：
+
+```bash
+uv pip install --python integrations/.venv/bin/python -r integrations/requirements-api.txt
+```
+
+这组依赖不包含 Inspect / Transformers 等独立 benchmark 环境。远程部署时应使用独立 HTTPS 登录入口，后端继续只监听本机，详见 [服务器部署说明](docs/server-deployment.md)。
+
 检查依赖源码和必要素材是否完整，不联网：
 
 ```bash

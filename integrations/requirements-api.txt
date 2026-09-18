@@ -1,0 +1,10 @@
+# Python 3.12+; isolated CCMax and the four integrated KVV API test suites.
+# Versions match the pinned official KVV uv.lock (revision 66092cf).
+# Install this file into a dedicated venv after scripts/prepare_kvv.py.
+# The API suites do not import the optional Inspect/Transformers benchmarks.
+httpx[http2]==0.28.1
+openai==2.14.0
+jsonschema==4.25.1
+Pillow==12.1.0
+pytest==9.1.1
+pytest-rerunfailures==16.4

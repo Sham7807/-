@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -54,6 +55,24 @@ class PrepareKvvTests(unittest.TestCase):
         self.assertTrue(request.call_args.args[0].full_url.startswith(
             "https://media.githubusercontent.com/media/MoonshotAI/Kimi-Vendor-Verifier/"))
         self.assertEqual(self.path.read_bytes(), self.data)
+
+    def test_new_public_fixtures_are_readable_by_service_account(self):
+        for initial in (None, self.pointer_bytes):
+            with self.subTest(initial="missing" if initial is None else "pointer"):
+                self.path.unlink(missing_ok=True)
+                if initial is not None:
+                    self.path.write_bytes(initial)
+                    self.path.chmod(0o600)
+                with patch.object(subject, "urlopen", return_value=io.BytesIO(self.data)):
+                    self.assertEqual(self.run_fixtures(), 1)
+                self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o644)
+
+                # Subsequent preparation/checks must preserve an owner's custom mode.
+                self.path.chmod(0o600)
+                with patch.object(subject, "urlopen", side_effect=AssertionError("unexpected network")):
+                    self.assertEqual(self.run_fixtures(), 0)
+                    self.assertEqual(self.run_fixtures(check=True), 0)
+                self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
 
     def test_wrong_hash_or_size_does_not_replace_pointer(self):
         for invalid in (b"x" * len(self.data), self.data[:-1], self.data + b"x"):

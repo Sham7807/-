@@ -209,6 +209,9 @@ def prepare_fixtures(repo, pointers, revision, check=False):
                 output.write(data)
             # Avoid replacing locally edited content or a new link while staging.
             if fixture_state(path, pointer) != "ready":
+                # These verified official fixtures are public. A service account must
+                # be able to read files installed by root; leave existing files alone.
+                temporary.chmod(0o644)
                 temporary.replace(path)
         finally:
             if temporary is not None and temporary.exists():
