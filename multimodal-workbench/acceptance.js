@@ -1,0 +1,180 @@
+/* Optional local verification service; basic browser tests remain independent. */
+(function(){
+'use strict';
+const el=id=>document.getElementById(id),make=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
+let modelFetchEpoch=0,modelCatalog=[];
+let selected='general',runningSuite='',token='',runId='',active=false,pollTimer=null,serviceReady=false;
+let serviceState='connecting',kvvRevision='';
+const suiteRuns=new Map();
+let displayedRunId='',pollGeneration=0,restoring=false;
+const statuses={passed:'通过',failed:'未通过',skipped:'已跳过',inconclusive:'无法判定',error:'运行错误',cancelled:'已取消',completed:'测试已完成',running:'运行中',not_covered:'未覆盖'};
+const ccItems=['无效 thinking 签名','message_start 唯一性','message_stop 完整收尾','连接及时关闭','流中错误事件','错误状态与格式','usage / 缓存字段','工具参数 JSON 增量'];
+const quickItems=['基础请求 · non-thinking','基础请求 · thinking','非法温度 · non-thinking','非法温度 · thinking','Tool Schema · 非流式','Tool Schema · 流式','Dynamic tools','JSON Object 输出','tool_choice required','Prompt Tokens · 基础','Prompt Tokens · 工具'];
+const fullItems=['参数约束 · 全量','Tool JSON Schema · 全量','K3 特性契约 · 全量','Prompt Token · 文本与视觉'];
+function message(text,error=false){el('acceptanceMessage').hidden=!text;el('acceptanceMessage').textContent=text;el('acceptanceMessage').className='notice'+(error?' error':'');}
+function updateServiceBadge(){
+ const badge=el('acceptanceService'),kimi=selected==='kimi';
+ if(serviceState==='file'){
+  badge.textContent='需要本地验收服务';badge.title='双击启动验收工作台.command，各专项共用同一个本地服务。';
+ }else if(serviceState==='connecting'){
+  badge.textContent='正在连接本地验收服务';badge.title='正在检查网页与本地验收服务的连接。';
+ }else if(serviceState==='connected'){
+  badge.textContent=kimi?'本地服务已连接 · '+(kvvRevision?'集成 KVV '+kvvRevision:'KVV 版本未提供'):'本地验收服务已连接';
+  badge.title=kimi?'仅表示网页已连接本地服务；开始 Kimi 验收后会调用已集成的官方 KVV，启动结果以任务日志为准。':'网页已连接本地服务，CCMax 由独立的 Anthropic Messages 检测器执行。';
+ }else{
+  badge.textContent='本地验收服务未连接';badge.title='请检查本地验收服务是否运行，恢复服务后刷新页面重新连接。';
+ }
+}
+function config(){return {suite:selected==='ccmax'?'ccmax':el('acceptanceScope').value,base:el('acceptanceBase').value.trim(),key:el('acceptanceKey').value.trim(),model:el('acceptanceModel').value.trim(),timeout:Number(el('acceptanceTimeout').value),signature_samples:Number(el('acceptanceSignature').value),sse_samples:Number(el('acceptanceSse').value),concurrency:2,auth:el('acceptanceAuth').value,think_mode:el('acceptanceThinkMode').value,thinking:el('acceptanceThinkMode').value!=='none'};}
+function updatePlan(){
+ const cc=selected==='ccmax',full=el('acceptanceScope').value==='kvvfull';
+ el('acceptanceTitle').textContent=cc?'CCMax渠道验收':'Kimi Vendor Verifier';
+ el('acceptanceDescription').textContent=cc?'使用独立的 Anthropic Messages 检测器，检查流式可靠性、参数校验和工具调用，保留每次样本证据。':'网页通过同一个本地服务自动调用已集成的 MoonshotAI 官方 KVV，提供 11 项预检和四套完整 API 验证，无需另开项目。';
+ el('acceptanceFootnote').textContent=cc?'CCMax 使用独立的 Anthropic Messages 检测器，结果按请求样本与检查类别分别汇总。本地服务保存脱敏证据。':'本地服务自动调用已集成的官方 KVV。预检是用例抽样，全套是四套 API 验证，不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 能力评测。';
+ el('acceptanceKimiFields').hidden=cc;el('acceptanceCcFields').hidden=!cc;
+ const items=cc?ccItems:full?fullItems:quickItems;
+ const root=el('acceptancePlan');root.replaceChildren(make('h3','',cc?'8 类渠道验收检查':full?'全套 API verifier':'11 项代表性预检'));
+ const list=make('ol','acceptance-plan-list');items.forEach((text,i)=>{const item=make('li');item.append(make('i','',String(i+1).padStart(2,'0')),make('span','',text));list.append(item);});root.append(list);
+ const note=cc?'只有正常 2xx 完成响应才算签名被接受。401、429、网络错误记为无法判定；SSE error 记录为本次调用失败。':full?'当前版本收集 611 个 pytest 项，含官方跳过项和本地检查。逐项执行，不自动重试失败请求；用例内可能有多次 API 请求。':'复用现有 11 项预检清单；这是官方用例的抽样组合，不是 Kimi 官方认证。非法参数遇到鉴权或网络错误不会记为通过。';
+ root.append(make('p','acceptance-plan-note',note));
+ el('acceptanceRequestHint').textContent=cc?`计划 ${Number(el('acceptanceSignature').value)+Number(el('acceptanceSse').value)+2} 次请求（含 1 次强制工具调用、1 次错误样例），按渠道计费。`:full?'全量执行数百次请求，按渠道计费；完成时间取决于模型速度。':'计划 11 个测试项，不自动重试；请求按渠道计费。';
+}
+async function api(path,options={}){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path==='/api/models'?30000:12000);
+ try{const r=await fetch(path,{...options,signal:controller.signal,cache:'no-store',headers:{'Content-Type':'application/json','X-Workbench-Token':token,...options.headers}});if(!r.ok){let text;try{text=(await r.json()).error;}catch{}const error=new Error(text||'本地服务错误 '+r.status);error.status=r.status;throw error;}return r;}finally{clearTimeout(timer);}
+}
+function setActive(value){active=value;el('acceptanceFields').disabled=value||restoring;el('acceptanceRun').disabled=value||restoring||!serviceReady;el('acceptanceStop').disabled=!value;document.querySelectorAll('.deep-suite-tabs button[data-suite]:not([data-suite="general"])').forEach(b=>b.disabled=value&&b.dataset.suite!==runningSuite);}
+function syncDownloads(){
+ const saved=suiteRuns.get(selected),available=!!(saved&&saved.id===displayedRunId&&saved.data.result);
+ document.querySelectorAll('[data-acceptance-download]').forEach(b=>b.disabled=!available);
+}
+function hideResults(){
+ displayedRunId='';el('acceptanceProgress').hidden=true;el('acceptanceVerdict').hidden=true;
+ for(const id of ['acceptanceStage','acceptanceCount','acceptanceElapsed','acceptanceEta','acceptanceSummary','acceptanceVerdict','acceptanceCases','acceptanceLog'])el(id).replaceChildren();
+ el('acceptanceBar').value=0;syncDownloads();
+}
+function showSuiteResult(){
+ const saved=suiteRuns.get(selected);
+ if(saved)render(saved.data,saved.id);else hideResults();
+}
+function recordRun(data,id){
+ const suite=data.suite==='ccmax'?'ccmax':'kimi';
+ suiteRuns.set(suite,{id,data});runningSuite=suite;setActive(data.status==='running');
+ if(selected===suite)render(data,id);
+}
+function selectSuite(value){
+ if(active&&value!=='general'&&value!==runningSuite)return;
+ selected=value;updateServiceBadge();document.querySelectorAll('[data-suite]').forEach(b=>{b.classList.toggle('active',b.dataset.suite===value);b.setAttribute('aria-selected',String(b.dataset.suite===value));});
+ el('legacyFrame').hidden=value!=='general';el('acceptancePanel').hidden=value==='general';
+ if(value!=='general'){
+  for(const [to,from] of [['acceptanceBase','base'],['acceptanceKey','key'],['acceptanceModel','model']])if(!el(to).value)el(to).value=el(from).value;
+  message('');updatePlan();showSuiteResult();
+ }
+}
+function latestEventCases(events){
+ const latest=new Map();
+ for(const event of events){
+  const item=event.case||event.sample||(event.phase==='sample_complete'?{id:event.sample_id,status:event.status}:event.type==='result'?event.result:null);
+  if(!item||!item.status)continue;
+  const id=item.id||item.nodeid||item.sample_id||event.sample_id;
+  const key=id||item;
+  latest.delete(key);latest.set(key,id?{...item,id}:item);
+ }
+ return [...latest.values()];
+}
+function restoreConfiguration(job){
+ const saved=job.result?.configuration;
+ if(!saved||typeof saved!=='object'||Array.isArray(saved))return;
+ const restored={};
+ for(const [field,id,min,max] of [['signature_samples','acceptanceSignature',1,20],['sse_samples','acceptanceSse',1,200],['timeout','acceptanceTimeout',5,600]]){
+  const value=Number(saved[field]);
+  if(Number.isFinite(value)&&value>=min&&value<=max&&(field==='timeout'||Number.isInteger(value))){el(id).value=String(value);restored[field]=value;}
+ }
+ if(['anthropic','bearer'].includes(saved.auth))el('acceptanceAuth').value=saved.auth;
+ if(['kimi','opensource','none'].includes(saved.think_mode))el('acceptanceThinkMode').value=saved.think_mode;
+ if(restored.signature_samples!==undefined&&restored.sse_samples!==undefined){
+  const signature=restored.signature_samples,sse=restored.sse_samples;
+  el('acceptanceSampling').value=signature===1&&sse===3?'quick':signature===5&&sse===50?'batch':'custom';
+ }
+}
+function renderCase(item){
+ const row=make('div','acceptance-case '+item.status);row.append(make('b','',statuses[item.status]||item.status),make('span','',(item.label||item.id||item.probe||'测试项')+(Number.isInteger(item.samples)?`（${item.samples} 样本 / ${item.failures||0} 异常）`:'')));
+ const detail=item.detail||item.details||item.issues||item.notes;if(detail&&(typeof detail==='string'||detail.length)){
+ const details=make('details'),summary=make('summary','','查看详情');details.append(summary,make('pre','',typeof detail==='string'?detail:JSON.stringify(detail,null,2)));row.append(details);}
+ return row;
+}
+function duration(seconds){return seconds>=60?`${Math.floor(seconds/60)} 分 ${Math.floor(seconds%60)} 秒`:`${Math.floor(seconds)} 秒`;}
+function render(data,id){
+ displayedRunId=id;el('acceptanceProgress').hidden=false;
+ const done=data.completed||0,total=data.total||0,pct=total?Math.min(100,done/total*100):0;
+ el('acceptanceStage').textContent=`${data.suite==='ccmax'?'CCMax':data.suite==='kvv11'?'KVV 11 项预检':'KVV 全套验证'} · ${statuses[data.status]||data.status}`;
+ el('acceptanceCount').textContent=total?`${done} / ${total}`:`已完成 ${done}`;if(total){el('acceptanceBar').value=pct;}else el('acceptanceBar').removeAttribute('value');
+ el('acceptanceElapsed').textContent='已用 '+duration(data.elapsed||0);
+ el('acceptanceEta').textContent=data.status!=='running'?'本次运行已结束':done>=3&&total>done?'按已完成用例估计剩余约 '+duration((data.elapsed||0)/done*(total-done))+'，仅供参考':'预计剩余：等待足够样本';
+ const result=data.result,summary=result?.summary||data.summary;
+ const verdict=result?.verdict;el('acceptanceVerdict').hidden=!verdict;if(verdict){el('acceptanceVerdict').className='acceptance-verdict '+verdict.status;el('acceptanceVerdict').replaceChildren(make('b','',verdict.label),make('p','',verdict.detail));}
+ el('acceptanceSummary').textContent=summary?`${data.suite==='ccmax'?'请求样本':'用例'}：通过 ${summary.passed||0} · 未通过 ${summary.failed||0} · 跳过 ${summary.skipped||0} · 无法判定 ${summary.inconclusive||0}`:'';
+ const actualRequests=result?.transport?.request_count??data.request_count;if(actualRequests!==undefined)el('acceptanceSummary').textContent+=` · 实际 API 请求 ${actualRequests} 次`;
+ if(result?.error)message(result.error,true);
+ const events=data.events||[],cases=result?(result.cases||result.checks||[]):latestEventCases(events);
+ const transportCases=(result?.transport?.checks||[]).filter(x=>x.status!=='passed');el('acceptanceCases').replaceChildren(...cases.slice(-700).map(renderCase),...transportCases.map(renderCase));
+ el('acceptanceLog').textContent=result?.log||events.slice(-20).map(e=>e.message||e.case?.id||`${e.completed??''}${e.total?' / '+e.total:''}`).join('\n');
+ syncDownloads();
+}
+async function poll(){
+ if(!runId)return;
+ const id=runId,generation=pollGeneration;
+ try{const data=await (await api('/api/runs/'+id)).json();if(id!==runId||generation!==pollGeneration)return;serviceReady=!!token;serviceState='connected';updateServiceBadge();recordRun(data,id);if(data.status==='running')pollTimer=setTimeout(poll,1000);}
+ catch(e){if(id!==runId||generation!==pollGeneration)return;if(!e.status){serviceReady=false;serviceState='disconnected';updateServiceBadge();setActive(active);}message('状态获取失败：'+e.message+'。任务可能仍在后台运行，可刷新页面重新连接。',true);pollTimer=setTimeout(poll,4000);}
+}
+async function start(){
+ if(restoring)return;
+ const c=config();if(!c.base||!c.key||!c.model){message('请填写渠道地址、API Key 和模型 ID。',true);return;}
+ if(!serviceReady){message('请先双击「启动验收工作台.command」并打开本地工作台。',true);return;}
+ runningSuite=selected;setActive(true);message('');clearTimeout(pollTimer);pollGeneration++;hideResults();
+ try{const data=await (await api('/api/runs',{method:'POST',body:JSON.stringify(c)})).json();runId=data.id;recordRun({suite:c.suite,status:'running'},runId);await poll();}
+ catch(e){setActive(false);showSuiteResult();message(e.message,true);}
+}
+async function connect(){
+ if(location.protocol==='file:'){serviceState='file';updateServiceBadge();el('acceptanceLocalHelp').hidden=false;setActive(false);return;}
+ serviceState='connecting';updateServiceBadge();setActive(false);
+ let data;
+ try{
+  data=await (await api('/api/session')).json();token=typeof data.token==='string'?data.token:'';
+  if(!token)throw new Error('本地验收会话不可用');
+  serviceReady=true;serviceState='connected';kvvRevision=typeof data.kvv_revision==='string'?data.kvv_revision:'';restoring=!!(data.active||data.latest);
+  updateServiceBadge();el('acceptanceLocalHelp').hidden=true;setActive(false);
+ }catch{
+  token='';serviceReady=false;serviceState='disconnected';kvvRevision='';updateServiceBadge();el('acceptanceLocalHelp').hidden=false;setActive(false);return;
+ }
+ if(data.active||data.latest){
+  runId=data.active||data.latest;
+  try{
+   const job=await (await api('/api/runs/'+runId)).json();el('acceptanceBase').value=job.base||'';el('acceptanceModel').value=job.model||'';restoreConfiguration(job);
+   recordRun(job,runId);if(job.suite!=='ccmax')el('acceptanceScope').value=job.suite;selectSuite(runningSuite);
+   if(typeof setTextMode==='function')setTextMode('deep');await poll();
+  }catch(e){
+   if(!e.status){serviceReady=false;serviceState='disconnected';updateServiceBadge();setActive(false);}
+   message('任务恢复失败：'+e.message+'。可刷新页面重试，已有报告仍保存在本地。',true);
+  }finally{restoring=false;setActive(active);}
+ }
+}
+for(const b of document.querySelectorAll('[data-suite]'))b.addEventListener('click',()=>selectSuite(b.dataset.suite));
+el('acceptanceScope').addEventListener('change',updatePlan);
+el('acceptanceSampling').addEventListener('change',()=>{const mode=el('acceptanceSampling').value;if(mode!=='custom'){el('acceptanceSignature').value=mode==='batch'?5:1;el('acceptanceSse').value=mode==='batch'?50:3;}updatePlan();});
+for(const id of ['acceptanceSignature','acceptanceSse'])el(id).addEventListener('input',()=>{el('acceptanceSampling').value='custom';updatePlan();});
+el('acceptanceRun').addEventListener('click',start);
+el('acceptanceStop').addEventListener('click',async()=>{if(!runId)return;el('acceptanceStop').disabled=true;try{await api('/api/runs/'+runId+'/cancel',{method:'POST',body:'{}'});message('已请求取消，正在关闭后台请求并整理已完成结果。');}catch(e){message(e.message,true);el('acceptanceStop').disabled=false;}});
+for(const button of document.querySelectorAll('[data-acceptance-download]'))button.addEventListener('click',async()=>{const saved=suiteRuns.get(selected),id=displayedRunId;if(!saved||saved.id!==id||!saved.data.result)return;button.disabled=true;try{const r=await api('/api/runs/'+id+'/'+button.dataset.acceptanceDownload);const blob=await r.blob(),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='acceptance-'+button.dataset.acceptanceDownload;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(e){message(e.message,true);}finally{syncDownloads();}});
+async function loadModels(){
+ if(active||!serviceReady)return;
+ const c=config();if(!c.base||!c.key){message('请先填写渠道地址和 API Key。',true);return;}
+ const epoch=++modelFetchEpoch;el('acceptanceModels').disabled=true;el('acceptanceModelHint').textContent='正在获取…';
+ try{const data=await (await api('/api/models',{method:'POST',body:JSON.stringify({base:c.base,key:c.key,auth:selected==='ccmax'?c.auth:'bearer'})})).json();if(epoch!==modelFetchEpoch)return;modelCatalog=data.models||[];const picker=window.ChoicePickers.attach(el('acceptanceModel'),{label:'渠道模型',options:modelCatalog});picker.open();el('acceptanceModelHint').textContent=`已获取 ${modelCatalog.length} 个模型，箭头可重复选择；未列出的映射模型仍可手动填写。`;message('');}
+ catch(e){if(epoch===modelFetchEpoch){el('acceptanceModelHint').textContent='获取失败；仍可手动填写模型 ID。';message(e.message,true);}}
+ finally{if(epoch===modelFetchEpoch)el('acceptanceModels').disabled=false;}
+}
+for(const id of ['acceptanceBase','acceptanceKey','acceptanceAuth'])el(id).addEventListener('input',()=>{modelFetchEpoch++;modelCatalog=[];window.ChoicePickers.attach(el('acceptanceModel'),{label:'渠道模型',options:[]}).close();el('acceptanceModels').disabled=false;el('acceptanceModelHint').textContent='渠道配置已变化，请重新获取；支持手动填写。';});
+el('acceptanceModels').addEventListener('click',loadModels);
+connect();
+})();

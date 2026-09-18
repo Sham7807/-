@@ -1,0 +1,33 @@
+# Local credentials and machine state
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+*.log
+
+# Downloaded upstream sources (prepared at the pinned revision)
+/Kimi-Vendor-Verifier/
+/integrations/Kimi-Vendor-Verifier/
+/integrations/api-channel-acceptance-test/
+
+# Private channel evidence and generated QA artifacts
+/integrations/reports/
+/multimodal-workbench/qa-*
+/*-eval-*/
+/*-eval-*.zip
+
+# Original standalone prototype, superseded by the workbench
+/llm_channel_test_platform.html
+
+# Local tools and release verification outputs
+/.local-tools/
+/release-check/

@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/MoonshotAI/Kimi-Vendor-Verifier",
+  "revision": "66092cf444c97356c0e11c5078c67116390615d9",
+  "precheck": "11 official pytest cases matching existing local run_precheck11.sh",
+  "full": [
+    "tests/params",
+    "tests/tool_call_json_schema",
+    "tests/k3_features",
+    "tests/prompt_tokens"
+  ],
+  "adapter": "kvv_progress.py supplies progress, cancellation support, no automatic retries, and guards unrelated parameter rejection errors",
+  "ccmax_reference": "api-channel-acceptance-test.zip provided by the user",
+  "data": "Git LFS data resolved and SHA-256 verified against upstream pointers"
+}

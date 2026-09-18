@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>小小宇宙无敌 · 多模态渠道测试台</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="acceptance.css">
+</head>
+<body>
+<header class="topbar"><div class="brand"><span class="brand-icon">宇<span>↗</span></span><div>小小宇宙无敌<small>多模态渠道测试台</small></div></div><div class="top-actions"><span class="header-label">MODEL TESTING STUDIO</span><span class="local-badge"><i></i> 本地会话 <span>v1.10</span></span></div></header>
+<main id="workbench">
+<section class="intro"><div><div class="eyebrow"><span></span> YOUR MODELS, IN ONE PLACE</div><h1>连接模型<span>。</span>看见结果<span>。</span></h1><p>从一次真实请求开始，检验每一个渠道。</p></div><div class="intro-note"><span>一个工作台，四种模态</span><p>自由选择协议与模型，直接预览生成内容。</p></div></section>
+<div class="kind-tabs" role="tablist" aria-label="模型类型">
+<div id="textKindCard" class="text-kind-card active" role="presentation">
+<button class="kind-tab active" data-kind="text" role="tab" aria-selected="true"><span class="kind-icon">Aa</span><span><b>文本模型</b><small>对话与多模态理解</small></span><span class="tab-number">01</span></button>
+<div id="textModes" class="text-modes" role="tablist" aria-label="文本测试方式">
+<button id="basicBtn" class="text-mode active" role="tab" aria-selected="true" aria-controls="basicView" type="button">基础测试</button>
+<button id="legacyBtn" class="text-mode" role="tab" aria-selected="false" aria-controls="legacyView" type="button" title="流式输出、参数、并发与长上下文">深度检测</button>
+</div>
+</div>
+<button class="kind-tab" data-kind="image" role="tab" aria-selected="false"><span class="kind-icon">▧</span><span><b>图像模型</b><small>文生图与图片编辑</small></span><span class="tab-number">02</span></button>
+<button class="kind-tab" data-kind="video" role="tab" aria-selected="false"><span class="kind-icon">▷</span><span><b>视频模型</b><small>生成与异步任务查询</small></span><span class="tab-number">03</span></button>
+<button class="kind-tab" data-kind="audio" role="tab" aria-selected="false"><span class="kind-icon">≋</span><span><b>音频模型</b><small>语音合成与音频转写</small></span><span class="tab-number">04</span></button>
+</div>
+<div id="basicView">
+<details id="coveragePanel" class="coverage-panel"><summary><b id="coverageTitle">本次自动检测</b><span id="coverageItems"></span><span class="coverage-more">范围说明</span></summary><small id="coverageLimit"></small></details>
+<div class="workspace">
+<section class="config-panel panel"><div class="section-heading"><h2><span>01</span> 配置测试</h2><span class="micro">CONFIGURATION</span></div>
+<fieldset id="configFields"><div class="form-section"><div class="form-section-title">渠道连接 <span>CONNECTION</span></div><div class="form-group"><label for="base">渠道地址 <span>Base URL</span></label><input id="base" type="url" placeholder="https://your-relay.com" autocomplete="off" spellcheck="false"><small>支持域名或带 /v1 的地址。</small></div>
+<div class="form-group"><label for="key">API Key <span>仅用于本次会话</span></label><div class="input-action"><input id="key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false"><button id="showKey" type="button" aria-label="显示密钥">显示</button></div></div>
+</div><div class="form-section"><div class="form-section-title">模型与任务 <span>MODEL & TASK</span></div>
+<div class="form-group" id="imageModeGroup" hidden><label for="imageMode">图像任务</label><select id="imageMode"><option value="generation">文生图</option><option value="edit">图生图 / 编辑</option><option value="reference">多图参考 / 融合</option></select><small id="imageModeHint"></small></div>
+<div class="form-group"><label for="preset">接口协议</label><select id="preset"></select><small id="presetDescription"></small></div>
+<div class="form-group model-field"><label for="model">模型名称 <span class="model-fetch-actions"><button id="cancelModels" class="text-button" type="button" hidden>取消获取</button><button id="loadModels" class="text-button" type="button">获取模型列表 ↓</button></span></label>
+<div id="modelPicker" class="model-picker">
+<div class="model-input-row"><input id="model" role="combobox" aria-controls="modelList" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list" placeholder="选择模型，或手动填写模型 ID" autocomplete="off" spellcheck="false"><button id="modelClear" class="model-icon-button" type="button" aria-label="清空模型" title="清空模型">×</button><button id="modelToggle" class="model-icon-button" type="button" aria-label="展开全部模型" aria-expanded="false" aria-controls="modelMenu" title="展开全部模型">▾</button></div>
+<div id="modelMenu" class="model-menu" hidden><div class="model-search-row"><input id="modelSearch" type="search" role="combobox" aria-label="搜索模型列表" aria-controls="modelList" aria-expanded="false" aria-autocomplete="list" placeholder="搜索全部模型…" autocomplete="off" spellcheck="false"><button id="modelShowAll" type="button" class="text-button">全部</button></div><div id="modelListStatus" class="model-list-status" role="status" aria-live="polite"></div><div id="modelList" class="model-list" role="listbox" aria-label="可选模型"></div></div>
+</div><small id="modelHint" role="status" aria-live="polite">模型名称可手动填写；点击下箭头查看完整列表。</small></div>
+<div id="modelAdvice" class="model-advice" hidden><b>模型与测试类型可能不匹配</b><p id="modelAdviceText"></p><button id="applyModelAdvice" class="text-button" type="button"></button><label class="alias-override"><input id="allowMismatch" type="checkbox"> 渠道使用自定义映射，仍按当前配置测试</label></div>
+<div id="protocolNote" class="protocol-note" hidden></div>
+<div class="prompt-library"><label for="promptScenario">测试场景 <span>选择即填入，可继续编辑</span></label><div class="scenario-row"><select id="promptScenario" aria-describedby="scenarioGoal scenarioRequirement"></select></div><p id="scenarioGoal" aria-live="polite"></p><small id="scenarioRequirement"></small></div>
+<div class="form-group"><label for="prompt" id="promptLabel">测试提示词</label><textarea id="prompt" rows="4"></textarea></div>
+<div class="settings-grid">
+<div class="form-group" data-option="size"><label for="size">画面尺寸</label><input id="size" placeholder="留空使用渠道默认值" list="sizes"><datalist id="sizes"><option value="1024x1024"><option value="1536x1024"><option value="1024x1536"><option value="1280x720"><option value="720x1280"></datalist></div>
+<div class="form-group" data-option="duration"><label for="duration">视频时长（秒）</label><input id="duration" type="number" min="1" max="120" value="4"></div>
+<div class="form-group" data-option="resolution"><label for="resolution">视频分辨率 <span>resolution</span></label><input id="resolution" list="videoResolutions" placeholder="按渠道要求选择，如 720p" autocomplete="off" spellcheck="false"><datalist id="videoResolutions"><option value="480p"><option value="720p"><option value="1080p"><option value="4k"></datalist><small id="resolutionHint">独立于画面尺寸；可填写渠道支持的自定义值。</small></div>
+<div class="form-group" data-option="voice"><label for="voice" id="voiceLabel">音色</label><input id="voice" value="alloy" list="voices"><datalist id="voices"><option value="alloy"><option value="nova"><option value="shimmer"><option value="coral"><option value="Kore"><option value="Puck"><option value="Aoede"></datalist></div>
+<div class="form-group" data-option="format"><label for="format">音频格式</label><select id="format"><option value="mp3">MP3</option><option value="wav">WAV</option><option value="opus">Opus</option><option value="aac">AAC</option><option value="flac">FLAC</option><option value="pcm">PCM → WAV 预览</option></select></div>
+<div class="form-group" data-option="speed"><label for="speed">语速</label><input id="speed" type="number" min="0.25" max="4" step="0.25" value="1"></div>
+<div class="form-group" data-option="language"><label for="language">转写语言（可选）</label><input id="language" placeholder="如 zh、en；留空自动识别"></div>
+</div>
+<div class="form-group" id="fileGroup"><label for="files"><span id="fileLabel">参考图片（可选）</span><button id="clearFilesBtn" type="button" class="text-button">清空附件</button></label><div class="upload-area" id="uploadArea"><span>＋</span><input id="files" type="file" accept="image/*" multiple><small id="fileHint">选择或拖入图片，可继续添加</small></div><small id="fileSummary" role="status"></small><div id="inputPreview" class="input-preview"></div></div>
+<div id="parkedFiles" class="protocol-note" hidden></div>
+</div><details class="advanced"><summary>接口与高级参数 <span>可选</span></summary><div class="advanced-body">
+<div class="form-group"><label for="path">提交接口路径</label><input id="path" class="mono" spellcheck="false"></div>
+<div class="form-group"><label for="auth">鉴权方式</label><select id="auth"><option value="bearer">Authorization: Bearer</option><option value="anthropic">Anthropic · x-api-key</option><option value="gemini">Gemini · x-goog-api-key</option><option value="none">不使用鉴权</option></select></div>
+<div class="settings-grid"><div class="form-group"><label for="timeout">单次请求超时（秒）</label><input id="timeout" type="number" min="5" max="3600" value="180"></div><div class="form-group video-only"><label for="pollInterval">查询间隔（秒）</label><input id="pollInterval" type="number" min="1" max="120" value="5"></div></div>
+<div class="form-group video-only"><label for="pollPath">任务查询路径</label><input id="pollPath" class="mono" placeholder="/v1/videos/{id}"><small>{id} 会自动替换为任务 ID。</small></div>
+<div class="form-group video-only"><label for="contentPath">成品下载路径（可选）</label><input id="contentPath" class="mono" placeholder="/v1/videos/{id}/content"><small>用于完成后通过当前渠道鉴权获取视频。</small></div>
+<div class="form-group video-only"><label for="pollTimeout">最多等待视频（秒）</label><input id="pollTimeout" type="number" min="5" max="7200" value="600"></div>
+<div class="form-group"><label for="extra">附加请求参数 <span>JSON 对象</span></label><textarea id="extra" class="mono" rows="5" spellcheck="false" placeholder='{"quality": "high"}'>{}</textarea><small>顶层合并并覆盖默认请求体（model 请用上方模型字段）。复杂嵌套字段请填写完整对象。</small></div>
+<div class="form-group"><label for="batch">批量模型（可选）</label><textarea id="batch" rows="2" placeholder="model-a, model-b"></textarea><small>同一协议按顺序测试，每个模型提交一次；不同协议请分开测试。</small></div>
+</div></details>
+<div class="resume-box video-only"><label for="taskId">已有视频任务 ID</label><div class="input-action"><input id="taskId" placeholder="输入 ID 可继续查询"><button id="resumeBtn" type="button">继续查询</button></div><small>只查询已有任务，不会重新生成视频。</small></div>
+</fieldset>
+<div class="config-actions"><div class="run-actions"><button id="runBtn" class="primary">开始测试 <span>↗</span></button><button id="stopBtn" class="secondary" disabled>停止</button><button id="previewBtn" class="secondary" title="查看实际请求体">请求预览</button></div><p class="run-hint" id="runHint">将向当前渠道提交 1 次生成请求，按渠道规则计费。</p>
+<div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+</div>
+</section>
+<section class="results-panel">
+<div class="section-heading result-heading"><h2><span>02</span> 测试结果 <b id="resultCount">0</b></h2><div class="result-tools"><button id="demoBtn" class="text-button">体验预览</button><button id="exportBtn" class="text-button" disabled>导出报告 ↓</button><button id="clearBtn" class="text-button" disabled>清空</button></div></div>
+<div class="results-content">
+<div id="running" class="running" hidden>
+<div class="running-line"><span class="spinner"></span><b id="runningLabel">请求中</b><span id="elapsed">0s</span></div>
+<div id="progressDashboard" hidden>
+<div class="progress-head"><b id="progressStage">准备请求</b><span id="progressPercent">进度待返回</span></div>
+<div id="progressBar" class="progress-track is-indeterminate" role="progressbar" aria-label="渠道任务进度" aria-valuemin="0" aria-valuemax="100"><div id="progressFill"></div></div>
+<div class="progress-steps" aria-hidden="true"><span data-stage="submit">提交请求</span><span data-stage="queue">排队 / 处理</span><span data-stage="generate">生成内容</span><span data-stage="download">获取结果</span></div>
+<div class="progress-facts"><div><small>预计剩余</small><b id="progressEta">暂时无法估计</b><span id="progressEtaSource">等待渠道返回进度</span></div><div><small>状态更新</small><b id="progressNextPoll">等待首次响应</b><span id="progressBatch">单模型测试</span></div></div>
+<p id="progressLimit" class="progress-limit"></p>
+</div>
+<small id="runningDetail">等待渠道响应…</small></div>
+<div id="empty" class="empty-state panel"><div class="empty-caption">OUTPUT CANVAS</div><div class="empty-orbit"><span>Aa</span><span>▧</span><span>▷</span><span>≋</span><i>↗</i></div><h3>下一份结果，从这里开始</h3><p>在左侧完成配置，发起第一次测试。<br>图片、视频与声音，都能在这里直接查看。</p><div class="empty-tags"><span>图片放大</span><span>影音播放</span><span>响应溯源</span></div></div>
+<div id="results" aria-live="polite"></div>
+<details class="log-panel panel"><summary>请求日志 <span id="logCount">0 条</span></summary><div id="logs" class="logs"><p class="log-placeholder">请求状态与视频任务进度将在这里记录。</p></div></details>
+<div class="compatibility"><span>ⓘ</span><p>协议与模型名需要匹配渠道文档。纯前端连接需要渠道允许 CORS；媒体链接失效或被限制跨域时，可打开原链接查看。接口返回成功不等于生成质量合格，请检查实际内容。</p></div>
+</div>
+</section>
+</div>
+</div>
+<section id="legacyView" hidden><div class="legacy-bar"><div><p>文本深度检测</p><div class="deep-suite-tabs" role="tablist" aria-label="深度检测套件"><button type="button" class="active" data-suite="general" role="tab" aria-selected="true">通用检测</button><button type="button" data-suite="ccmax" role="tab" aria-selected="false">CCMax 验收</button><button type="button" data-suite="kimi" role="tab" aria-selected="false">Kimi · KVV</button></div></div><button id="backBtn" class="secondary">← 返回基础测试</button></div><section id="acceptancePanel" class="acceptance-panel" hidden>
+<div class="acceptance-intro"><div><span class="eyebrow">CHANNEL ACCEPTANCE</span><h2 id="acceptanceTitle">渠道验收</h2><p id="acceptanceDescription"></p></div><span id="acceptanceService" class="acceptance-badge">正在连接本地验收服务</span></div>
+<div id="acceptanceLocalHelp" class="acceptance-help" hidden>验收套件需要本地 Python 服务。双击项目目录的「启动验收工作台.command」，再从浏览器打开工作台。<a href="http://127.0.0.1:8877/" target="_blank" rel="noopener">打开本地工作台 ↗</a><small>基础多模态测试仍可直接使用 HTML。服务只监听本机，密钥仅用于所填渠道。</small></div>
+<div class="acceptance-grid"><div class="acceptance-config"><fieldset id="acceptanceFields">
+<div class="form-group"><label for="acceptanceBase">渠道地址</label><input id="acceptanceBase" type="url" placeholder="https://your-relay.com/v1" autocomplete="off"></div>
+<div class="form-group"><label for="acceptanceKey">API Key <span>不写入配置或报告</span></label><input id="acceptanceKey" type="password" autocomplete="off" placeholder="sk-…"></div>
+<div class="form-group"><label for="acceptanceModel">渠道模型 ID <button id="acceptanceModels" type="button" class="text-button">获取模型列表 ↓</button></label><input id="acceptanceModel" autocomplete="off" placeholder="填写渠道实际使用的模型 ID"><small id="acceptanceModelHint">列表可能不包含渠道映射模型，支持手动填写。</small></div>
+<div id="acceptanceKimiFields"><div class="form-group"><label for="acceptanceScope">测试范围</label><select id="acceptanceScope"><option value="kvv11">11 项预检</option><option value="kvvfull">全套验证 · 四套 API verifier</option></select></div><div class="form-group"><label for="acceptanceThinkMode">参数预检 / Schema 的 Thinking 格式</label><select id="acceptanceThinkMode"><option value="kimi">Kimi 原生格式</option><option value="opensource">开源部署格式</option><option value="none">参数 / Schema 请求不传 thinking</option></select></div><small>K3 特性及 Token 用例保留官方原生请求，不受上方格式选项改写；非 K3 模型失败不能直接证明渠道造假。</small></div>
+<div id="acceptanceCcFields" hidden><div class="form-group"><label for="acceptanceAuth">Messages 鉴权方式</label><select id="acceptanceAuth"><option value="anthropic">x-api-key（Anthropic）</option><option value="bearer">Authorization: Bearer</option></select></div><div class="form-group"><label for="acceptanceSampling">采样方案</label><select id="acceptanceSampling"><option value="quick">快速验收</option><option value="batch">批量验收</option><option value="custom">自定义</option></select></div><div class="settings-grid"><div class="form-group"><label for="acceptanceSignature">签名探针次数</label><input id="acceptanceSignature" type="number" min="1" max="20" value="1"></div><div class="form-group"><label for="acceptanceSse">SSE 采样次数</label><input id="acceptanceSse" type="number" min="1" max="200" value="3"></div></div><small>使用独立 Anthropic Messages 检测器，分别采集基础 SSE、工具调用与错误样例证据。</small></div>
+<div class="form-group acceptance-timeout"><label for="acceptanceTimeout">单次请求超时（秒）</label><input id="acceptanceTimeout" type="number" min="5" max="600" value="120"></div>
+</fieldset><div class="acceptance-actions"><button id="acceptanceRun" class="primary" type="button">开始验收 ↗</button><button id="acceptanceStop" class="secondary" type="button" disabled>取消任务</button></div><p id="acceptanceRequestHint" class="run-hint"></p><p id="acceptanceMessage" class="notice" hidden role="status"></p></div>
+<div class="acceptance-output"><div id="acceptancePlan"></div><div id="acceptanceProgress" hidden><div class="acceptance-progress-head"><b id="acceptanceStage">准备测试</b><span id="acceptanceCount"></span></div><progress id="acceptanceBar" max="100" value="0"></progress><div class="acceptance-timing"><span id="acceptanceElapsed"></span><span id="acceptanceEta"></span></div><div id="acceptanceSummary"></div><div id="acceptanceVerdict" class="acceptance-verdict" hidden></div><div class="acceptance-report-actions"><button class="secondary" type="button" data-acceptance-download="report.html" disabled>下载 HTML 报告</button><button class="secondary" type="button" data-acceptance-download="evidence.zip" disabled>下载证据包</button><button class="text-button" type="button" data-acceptance-download="report.json" disabled>JSON</button></div><div id="acceptanceCases" aria-live="polite"></div><details><summary>执行日志</summary><pre id="acceptanceLog"></pre></details></div></div></div>
+<p id="acceptanceFootnote" class="acceptance-footnote">本地服务执行测试并保存脱敏证据。预检是抽样，全套是官方四套 API 验证，不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 能力评测。</p>
+</section><iframe id="legacyFrame" title="文本模型深度检测" sandbox="allow-scripts allow-same-origin allow-downloads allow-modals" referrerpolicy="no-referrer"></iframe></section>
+<footer><span><b>小小宇宙无敌</b> / MULTIMODAL WORKBENCH</span><span>密钥不写入配置 · 基础结果保留在本页 · 专项验收保存脱敏报告</span></footer>
+</main>
+<dialog id="previewDialog"><div class="dialog-head"><h2>实际请求预览</h2><button id="closePreview" class="secondary">关闭</button></div><p>不发送请求。密钥已隐藏；附加 JSON 参数已合并。</p><pre id="requestPreview"></pre></dialog>
+<script src="engine.js"></script>
+<script src="media-download.js"></script>
+<script src="choice-picker.js"></script>
+<script src="prompts.js"></script>
+<script src="app.js"></script>
+<script src="acceptance.js"></script>
+</body></html>

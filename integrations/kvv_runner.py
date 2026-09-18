@@ -1,0 +1,140 @@
+"""Run the official Kimi Vendor Verifier, with no credentials on the command line."""
+from pathlib import Path
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent
+REPO = ROOT / 'Kimi-Vendor-Verifier'
+PRECHECK = [
+ 'tests/params/test_params.py::test_no_param_succeeds[non-thinking]',
+ 'tests/params/test_params.py::test_no_param_succeeds[thinking]',
+ 'tests/params/test_params.py::test_wrong_param_rejected[non-thinking-temperature=1.1]',
+ 'tests/params/test_params.py::test_wrong_param_rejected[thinking-temperature=1.1]',
+ 'tests/tool_call_json_schema/test_tool_call_json_schema.py::test_tool_call_schema_matches_case_schema[TestAdditionalProperties:1:non-stream]',
+ 'tests/tool_call_json_schema/test_tool_call_json_schema.py::test_tool_call_schema_matches_case_schema[TestAdditionalProperties:1:stream]',
+ 'tests/k3_features/test_dynamic_tools.py::test_dynamic_tool_in_system_callable[nostream]',
+ 'tests/k3_features/test_response_format.py::test_json_object[nostream]',
+ 'tests/k3_features/test_tool_choice.py::test_tool_choice_required_forces_call[nostream]',
+ 'tests/prompt_tokens/test_prompt_tokens.py::test_prompt_tokens_match_groundtruth[assistant_hello]',
+ 'tests/prompt_tokens/test_prompt_tokens.py::test_prompt_tokens_match_groundtruth[k3_tool_required]',
+]
+FULL = ['tests/params', 'tests/tool_call_json_schema', 'tests/k3_features', 'tests/prompt_tokens']
+
+def command(config, directory, collect=False):
+    args = [sys.executable, '-m', 'pytest', '-p', 'kvv_progress']
+    args += PRECHECK if config['suite'] == 'kvv11' else FULL
+    args += ['--think-mode', config.get('think_mode', 'kimi'), '--reruns', '0', '--force-reruns', '0', '-o', 'addopts=', '-q',
+             '--tool-json-report=' + str(directory / 'schema.json')]
+    if config.get('thinking', True): args += ['--thinking']
+    if collect: args += ['--collect-only']
+    else: args += ['--junitxml=' + str(directory / 'results.xml')]
+    return args
+
+def environment(config, directory):
+    env = os.environ.copy()
+    env.update(KIMI_API_KEY=config['key'], KIMI_BASE_URL=config['base'], MODEL_NAME=config['model'],
+               PYTHONPATH=str(ROOT), PYTHONUNBUFFERED='1', WORKBENCH_EVENTS=str(directory / 'events.jsonl'),
+               WORKBENCH_REQUEST_TIMEOUT=str(config.get('timeout', 120)), PYTEST_DISABLE_PLUGIN_AUTOLOAD='0')
+    # PYTEST_DISABLE_PLUGIN_AUTOLOAD treats any nonempty value as true; required plugins are explicit.
+    env.pop('PYTEST_DISABLE_PLUGIN_AUTOLOAD', None)
+    return env
+
+def merge_case(cases, event):
+    """One row per pytest node, retaining failures from call and teardown."""
+    previous = next((case for case in cases if case['id'] == event['id']), None)
+    if previous is None:
+        cases.append(dict(event))
+        return cases[-1]
+    phases = previous.setdefault('phases', [dict(previous)])
+    phases.append(dict(event))
+    previous['duration'] = previous.get('duration', 0) + event.get('duration', 0)
+    if event['status'] == 'failed':
+        previous['status'] = 'failed'
+        previous['detail'] = '\n'.join(x for x in (previous.get('detail', ''), event.get('detail', '')) if x)
+        previous['phase'] = event.get('phase')
+    return previous
+
+def classify_cases(cases, transport):
+    """Keep official assertions separate from unavailable channel evidence."""
+    for case in cases:
+        case['pytest_status'] = case.get('pytest_status', case['status'])
+        case['status'] = case['pytest_status']
+        prefix = '渠道调用失败，无法据此判断模型能力或参数契约。\n'
+        case['detail'] = case.get('detail', '').removeprefix(prefix)
+        requests = [r for r in transport.get('requests', []) if r.get('case_id') == case['id']]
+        case['request_count'] = len(requests)
+        case['request_ids'] = [r.get('request_id') for r in requests]
+        if (case['status'] == 'failed' and case.get('phase') != 'teardown' and requests
+                and requests[-1].get('infrastructure_error')
+                and not (requests[-1].get('termination') in ('client_closed', 'recorder_closed')
+                         and 200 <= (requests[-1].get('http_status') or 0) < 300)):
+            case['status'] = 'inconclusive'
+            case['detail'] = prefix + case.get('detail', '')
+    return cases
+
+def run(config, emit, cancelled, directory):
+    directory = Path(directory)
+    event_path = directory / 'events.jsonl'
+    stdout_path = directory / 'pytest.log'
+    cases, total = [], 11 if config['suite'] == 'kvv11' else None
+    with stdout_path.open('w', encoding='utf-8') as output:
+        process = subprocess.Popen(command(config, directory), cwd=REPO, env=environment(config, directory),
+                                   stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        offset = 0
+        def drain():
+            nonlocal offset, total
+            if not event_path.exists(): return
+            with event_path.open(encoding='utf-8') as events:
+                events.seek(offset)
+                while True:
+                    start = events.tell(); line = events.readline()
+                    if not line or not line.endswith('\n'): offset = start; break
+                    offset = events.tell()
+                    try: event = json.loads(line)
+                    except ValueError: continue
+                    if event['type'] in ('request_start','request_finish','transport_summary'):
+                        emit({**event,'total':total,'completed':len(cases)});continue
+                    if event['type'] == 'collected': total = event['total']
+                    elif event['type'] == 'case': event = merge_case(cases, event)
+                    emit({'type': 'progress', 'total': total, 'completed': len(cases), 'case': event})
+        while process.poll() is None:
+            drain()
+            if cancelled():
+                try: os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+                try: process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL); process.wait()
+                break
+            time.sleep(.25)
+        drain()
+    transport = load_transport(directory)
+    classify_cases(cases, transport)
+    return {'transport':transport,'suite': config['suite'], 'status': 'cancelled' if cancelled() else ('completed' if process.returncode in (0,1) else 'error'),
+            'exit_code': process.returncode, 'source': 'MoonshotAI/Kimi-Vendor-Verifier',
+            'revision': '66092cf', 'summary': {'total': total, 'completed': len(cases),
+                'passed': sum(c['status']=='passed' for c in cases), 'failed': sum(c['status']=='failed' for c in cases),
+                'skipped': sum(c['status']=='skipped' for c in cases), 'inconclusive':sum(c['status']=='inconclusive' for c in cases)},
+            'cases': cases, 'log': stdout_path.read_text(errors='replace')[-100000:]}
+
+
+def load_transport(directory):
+    path=Path(directory)/'transport-summary.json'
+    if path.exists():
+        try:return json.loads(path.read_text())
+        except (ValueError,OSError):pass
+    path=Path(directory)/'requests.jsonl'
+    started=set();requests=[];checks=[]
+    if path.exists():
+        for line in path.read_text(errors='replace').splitlines():
+            try:r=json.loads(line)
+            except ValueError:continue
+            if r.get('type')=='request_start':started.add(r.get('request_id'))
+            if r.get('type')=='request_finish':
+                requests.append({k:v for k,v in r.items() if k not in ('body','sse','response_headers','checks')})
+                checks.extend({**c,'request_id':r.get('request_id'),'case_id':r.get('case_id')} for c in r.get('checks',[]))
+    return {'request_count':len(started),'completed_requests':len(requests),'requests':requests,'checks':checks}

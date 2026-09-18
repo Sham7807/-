@@ -1,0 +1,23 @@
+"""Acceptance verdicts distinguish observed failures from missing evidence."""
+
+def decorate(result):
+    entries = result.get('checks') if result.get('suite') == 'ccmax_acceptance' else result.get('cases')
+    entries = entries or []
+    local = [x for x in entries if 'tolerance_boundaries' in x.get('id','')]
+    remote = [x for x in entries if x not in local]
+    counts = {status: sum(x.get('status') == status for x in remote) for status in ('passed','failed','inconclusive','skipped','not_covered')}
+    unknown = sum(x.get('status') not in counts for x in remote)
+    transport = result.get('transport') or {}
+    transport_bad = [x for x in transport.get('checks',[]) if x.get('status')=='failed']
+    untested = max(0, int(result.get('summary',{}).get('total') or 0) - int(result.get('summary',{}).get('completed') or 0))
+    if result.get('status')=='cancelled':
+        status,label,detail='inconclusive','已取消 · 结论不完整','保留已完成样本，未完成项不计为通过。'
+    elif counts['failed'] or transport_bad:
+        extra=f"、{len(transport_bad)} 项附加传输检查异常" if transport.get('checks') else ''
+        status,label,detail='failed','未满足本轮验收要求',f"发现 {counts['failed']} 项验收失败{extra}；请查看逐项证据。"
+    elif result.get('status')!='completed' or counts['inconclusive'] or counts['not_covered'] or unknown or untested or not counts['passed']:
+        status,label,detail='inconclusive','证据不足 · 无法确认通过','存在调用错误、未执行项或无法判定项，不能把本次运行视为通过。'
+    else:
+        status,label,detail='passed','本轮已执行检查通过','仅对本轮采样负责；不代表模型身份认证或长期稳定性保证。'
+    result['verdict']={'status':status,'label':label,'detail':detail,'counts':counts,'skipped':counts['skipped'],'untested':untested,'local_checks':len(local),'transport_failures':len(transport_bad),'unclassified':unknown}
+    return result
