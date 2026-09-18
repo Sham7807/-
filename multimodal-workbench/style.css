@@ -376,13 +376,14 @@ dialog>p { font-size: 11px; color: var(--muted); }
   .empty-tags { gap: 12px; font-size: 9px; }
 }
 @media (max-width: 760px) {
-  .topbar { height: 68px; padding: 0 18px; }
+  .topbar { height: 64px; padding: 0 16px; }
   .brand { font-size: 16px; gap: 9px; }
   .brand small { font-size: 9px; }
   .brand-icon { width: 32px; height: 35px; font-size: 20px; border-radius: 9px; }
   .header-label, .intro-note { display: none; }
   .local-badge { font-size: 9px; gap: 5px; }
   .local-badge>span { font-size: 9px; padding: 0; }
+  .top-actions { gap: 8px; }
   main { padding: 26px 16px 0; }
   .intro { margin-bottom: 22px; }
   h1 { font-size: 27px; margin-bottom: 6px; }
