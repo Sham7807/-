@@ -196,8 +196,39 @@ function requestScope(){
   const timer=setTimeout(()=>ctrl.abort(),cfg().timeout);
   return{ctrl,clear(){clearTimeout(timer);ACTIVE_CONTROLLERS.delete(ctrl);}};
 }
-const S={logs:[],details:[],intel:[],scores:{},fp:new Set(),batch:[],t0:null,tEnd:null,total:null,mode:''};
+const S={logs:[],details:[],intel:[],scores:{},fp:new Set(),batch:[],requests:[],t0:null,tEnd:null,total:null,mode:''};
+const historyResponses=new WeakMap();
 
+function historySafe(value){
+  const key=RUN_CONFIG?.key||'';const seen=new WeakSet();
+  function safe(v,k=''){
+    if(/^(?:authorization|proxy-authorization|x-api-key|x-goog-api-key|api[_-]?key|key|secret|cookie|set-cookie|password|access_token|refresh_token)$/i.test(k))return '[已隐藏]';
+    if(typeof v==='string'){
+      if(key)v=v.split(key).join('[已隐藏]').split(encodeURIComponent(key)).join('[已隐藏]');
+      v=v.replace(/(Bearer\s+)[^\s"<>]+/gi,'$1[已隐藏]').replace(/\bsk-[A-Za-z0-9_-]{8,}/g,'[已隐藏]').replace(/([?&](?:api[_-]?key|key|access_token|secret)=)[^&#\s"<>]*/gi,'$1[已隐藏]');
+      return v.length>16000?v.slice(0,16000)+'\n[已截取过长证据]':v;
+    }
+    if(!v||typeof v!=='object')return v;if(seen.has(v))return '[重复引用]';seen.add(v);
+    if(Array.isArray(v))return v.map(x=>safe(x));const out={};for(const [name,val]of Object.entries(v))out[name]=safe(val,name);return out;
+  }
+  return safe(value);
+}
+async function historyFetch(url,options={}){
+  const t=performance.now();let body=options.body;try{body=JSON.parse(body);}catch{}
+  const row=historySafe({id:'request-'+(S.requests.length+1),model:cfg().model,url,method:options.method||'GET',request:body,started_at:Date.now()/1000});S.requests.push(row);
+  try{const response=await fetch(url,options);row.status=response.status;row.duration_ms=performance.now()-t;row.headers=historySafe(Object.fromEntries(response.headers.entries()));historyResponses.set(response,row);return response;}
+  catch(error){row.status=options.signal?.aborted?'cancelled':'network_error';row.error=historySafe(error.message);row.duration_ms=performance.now()-t;throw error;}
+}
+function historyResponse(response,body){const row=historyResponses.get(response);if(row)row.response=historySafe(body);}
+function publishGeneralHistory(outcome,error=''){
+  if(!S.historyId)return;
+  const plain=html=>{const template=document.createElement('template');template.innerHTML=html;return template.content.textContent||'';};
+  const checks=S.details.map(item=>({name:item.name,result:item.result,status:item.cls==='bad'?'failed':item.cls==='ok'?'passed':'inconclusive',judge:item.judge}));
+  const batchFailed=S.batch.some(item=>!item.stream||!item.tools||!item.json||item.conc!=='3/3');
+  const status=outcome==='cancelled'?'cancelled':outcome==='failed'?'failed':batchFailed||checks.some(item=>item.status==='failed')?'failed':!checks.length||checks.some(item=>item.status==='inconclusive')?'inconclusive':'passed';
+  const data=historySafe({client_id:S.historyId,kind:'general',source:'general',title:'通用深度检测 · '+(S.config.models.length?S.config.models.join('、'):S.config.model),model:S.config.models.length?S.config.models.join(', '):S.config.model,base:S.config.base,prompt:'内置通用检测用例 · '+S.mode,status,created_at:S.createdAt/1000,duration_ms:(S.tEnd||performance.now())-S.t0,media:[],result:{config:S.config,mode:S.mode,total:S.total,scores:S.scores,checks,logs:S.logs,intelligence:S.intel.map(plain),batch:S.batch,requests:S.requests,error: error||undefined}});
+  if(window.parent!==window)window.parent.postMessage({type:'workbench:general-history',record:data},location.origin==='null'?'*':location.origin);
+}
 function ts(){return new Date().toTimeString().slice(0,8);}
 function log(msg,cls='inf'){
   S.logs.push({t:ts(),cls,msg});
@@ -255,14 +286,14 @@ async function post(payload,keyOverride){
   const t=performance.now();
   try{
     checkStop();
-    const resp=await fetch(CHAT(),{method:'POST',signal:ctrl.signal,
+    const resp=await historyFetch(CHAT(),{method:'POST',signal:ctrl.signal,
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+(keyOverride||c.key)},
       body:JSON.stringify(payload)});
     const dt=(performance.now()-t)/1000;
     let body=null;try{body=await resp.json();}catch(e){if(ctrl.signal.aborted)throw e;}
     checkStop();
     const h={};resp.headers.forEach((v,k)=>h[k.toLowerCase()]=v);
-    scanFp(h,body);
+    scanFp(h,body);historyResponse(resp,body);
     return{ok:resp.ok,status:resp.status,body,dt,headers:h};
   }catch(e){checkStop();return{ok:false,status:ctrl.signal.aborted?'timeout':'network',body:null,dt:(performance.now()-t)/1000,headers:null,err:e.message};}
   finally{scope.clear();}
@@ -372,12 +403,12 @@ async function tModels(){
   checkStop();const scope=requestScope();const {ctrl}=scope;
   try{
     checkStop();
-    const resp=await fetch(MODELS(),{signal:ctrl.signal,headers:{'Authorization':'Bearer '+cfg().key}});
+    const resp=await historyFetch(MODELS(),{signal:ctrl.signal,headers:{'Authorization':'Bearer '+cfg().key}});
     checkStop();
     if(!resp.ok){log(`模型列表: HTTP ${resp.status}`,'mid');return;}
     checkStop();
     const h={};resp.headers.forEach((v,k)=>h[k.toLowerCase()]=v);scanFp(h,null);
-    const d=await resp.json();checkStop();const ids=(Array.isArray(d.data)?d.data:[]).map(m=>String(m.id??''));
+    const d=await resp.json();historyResponse(resp,d);checkStop();const ids=(Array.isArray(d.data)?d.data:[]).map(m=>String(m.id??''));
     log(`模型列表: ${ids.length} 个在架`,'ok');
     intel(`<b>模型生态：</b>共 ${ids.length} 个模型${ids.length<=30?'：'+esc(ids.join('、')):'（前 15：'+esc(ids.slice(0,15).join('、'))+' …）'}`);
     /* 价格嗅探 */
@@ -411,12 +442,12 @@ async function tIdentity(){
 
 async function tStream(){
   checkStop();const c=cfg();const scope=requestScope();const {ctrl}=scope;
-  const t0=performance.now();let ttfb=null,chunks=0,usageSeen=false,lastT=null;
+  const t0=performance.now();let ttfb=null,chunks=0,usageSeen=false,lastT=null,historyStreamResponse=null;
   try{
     checkStop();
-    const resp=await fetch(CHAT(),{method:'POST',signal:ctrl.signal,
+    const resp=await historyFetch(CHAT(),{method:'POST',signal:ctrl.signal,
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.key},
-      body:JSON.stringify({model:c.model,stream:true,stream_options:{include_usage:true},messages:Q('数到20，每个数字一行'),max_tokens:2500})});
+      body:JSON.stringify({model:c.model,stream:true,stream_options:{include_usage:true},messages:Q('数到20，每个数字一行'),max_tokens:2500})});historyStreamResponse=resp;
     checkStop();
     const h={};resp.headers.forEach((v,k)=>h[k.toLowerCase()]=v);scanFp(h,null);
     if(!resp.ok){const b=await resp.text().catch(()=>'');
@@ -443,7 +474,7 @@ async function tStream(){
     return{ttfb,ok:true,usageSeen,fake,chunks};
   }catch(e){checkStop();log('流式失败: '+(ctrl.signal.aborted?'超时':e.message),'bad');
     detail('流式输出',ctrl.signal.aborted?'超时':e.message,'bad','❌');return{ttfb:null,ok:false,fake:null};}
-  finally{scope.clear();}
+  finally{if(historyStreamResponse)historyResponse(historyStreamResponse,{stream:true,chunks,ttfb_seconds:ttfb,spread_seconds:ttfb==null?null:(lastT??ttfb)-ttfb,note:'流式输出保留分块与时序摘要'});scope.clear();}
 }
 
 async function tCache(){
@@ -722,12 +753,12 @@ async function qIdentity(){
 }
 async function qStream(){
   checkStop();const c=cfg();const scope=requestScope();const {ctrl}=scope;
-  const t0=performance.now();let ttfb=null,chunks=0,lastT=null;
+  const t0=performance.now();let ttfb=null,chunks=0,lastT=null,historyStreamResponse=null;
   try{
     checkStop();
-    const resp=await fetch(CHAT(),{method:'POST',signal:ctrl.signal,
+    const resp=await historyFetch(CHAT(),{method:'POST',signal:ctrl.signal,
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.key},
-      body:JSON.stringify({model:c.model,stream:true,messages:Q('数到10'),max_tokens:2000})});
+      body:JSON.stringify({model:c.model,stream:true,messages:Q('数到10'),max_tokens:2000})});historyStreamResponse=resp;
     if(!resp.ok)return{ok:false,ttfb:null,fake:null};
     const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
     while(true){
@@ -741,7 +772,7 @@ async function qStream(){
     const fake=ttfb>3&&chunks>=8&&spread<Math.max(1.5,ttfb*0.3);
     return{ok:true,ttfb,fake};
   }catch(e){checkStop();return{ok:false,ttfb:null,fake:null};}
-  finally{scope.clear();}
+  finally{if(historyStreamResponse)historyResponse(historyStreamResponse,{stream:true,chunks,ttfb_seconds:ttfb,spread_seconds:ttfb==null?null:(lastT??ttfb)-ttfb,note:'流式输出保留分块与时序摘要'});scope.clear();}
 }
 async function qTools(){
   const r=await postSmart({model:cfg().model,max_tokens:2500,tool_choice:'auto',
@@ -956,7 +987,7 @@ async function runAll(){
   S.mode=batchList.length?'batch(quick)':mode;
   const has=d=>d.modes.includes(mode);
   STOP=false;RUNNING=true;RUN_CONFIG=Object.freeze({...c});
-  S.config=Object.freeze({base:c.base,model:c.model,timeout:c.timeout,conc:c.conc});
+  S.config=Object.freeze({base:c.base,model:c.model,timeout:c.timeout,conc:c.conc,models:batchList});
   stepsDone=0;stepsTotal=batchList.length?batchList.length:MODE_STEPS[mode];
   $('btnRun').disabled=true;$('btnStop').disabled=false;$('btnDl').disabled=true;$('btnCopy').disabled=true;
   $('log').innerHTML='';$('detailBody').innerHTML='';
@@ -965,11 +996,12 @@ async function runAll(){
   $('batchSection').style.display='none';$('batchBody').innerHTML='';
   $('progressWrap').style.display='block';
   $('progressBar').firstElementChild.style.width='0%';
-  S.logs=[];S.details=[];S.intel=[];S.scores={};S.fp=new Set();S.batch=[];S.total=null;
+  S.logs=[];S.details=[];S.intel=[];S.scores={};S.fp=new Set();S.batch=[];S.requests=[];S.total=null;S.historyId='general-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random());S.createdAt=Date.now();
   S.t0=performance.now();S.tEnd=null;
   initCards();
   for(const d of DIMS)if(!has(d)||batchList.length)skipCard(d.id,batchList.length?'批量快评':(mode==='quick'?'快速模式':'标准模式未含'));
   log(`目标: ${c.base} ｜ ${batchList.length?'批量: '+batchList.join(', '):'模型: '+c.model} ｜ 模式: ${S.mode} ｜ 超时: ${c.timeout/1000}s ｜ 并发: ${c.conc}`,'inf');
+  let historyOutcome='completed',historyError='';
   try{
     if(batchList.length){
       await runBatch(batchList);
@@ -1082,6 +1114,7 @@ async function runAll(){
     log(`✅ 全部测试完成，总耗时 ${((S.tEnd-S.t0)/1000).toFixed(0)}s，综合评分 ${S.total}/100`,'ok');
     log('💡 点击「下载 HTML 报告」可导出完整报告','inf');
   }catch(e){
+    historyOutcome=e.message==='用户中断'?'cancelled':'failed';historyError=e.message;
     S.tEnd=performance.now();
     MODEL_OVERRIDE=null;
     if(e.message==='用户中断'){
@@ -1097,6 +1130,7 @@ async function runAll(){
   }finally{
     for(const ctrl of ACTIVE_CONTROLLERS)ctrl.abort();
     ACTIVE_CONTROLLERS.clear();
+    try{publishGeneralHistory(historyOutcome,historyError);}catch{log('历史记录暂未保存，请保留当前报告。','mid');}
     $('btnRun').disabled=false;$('btnStop').disabled=true;MODEL_OVERRIDE=null;RUN_CONFIG=null;RUNNING=false;
   }
 }

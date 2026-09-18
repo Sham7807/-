@@ -5,7 +5,7 @@ const el=id=>document.getElementById(id),make=(tag,cls,text)=>{const e=document.
 let modelFetchEpoch=0,modelCatalog=[];
 let selected='general',runningSuite='',token='',runId='',active=false,pollTimer=null,serviceReady=false;
 let serviceState='connecting',kvvRevision='';
-const suiteRuns=new Map();
+const suiteRuns=new Map(),historyNotified=new Set();
 let displayedRunId='',pollGeneration=0,restoring=false;
 const statuses={passed:'通过',failed:'未通过',skipped:'已跳过',inconclusive:'无法判定',error:'运行错误',cancelled:'已取消',completed:'测试已完成',running:'运行中',not_covered:'未覆盖'};
 const ccItems=['无效 thinking 签名','message_start 唯一性','message_stop 完整收尾','连接及时关闭','流中错误事件','错误状态与格式','usage / 缓存字段','工具参数 JSON 增量'];
@@ -60,11 +60,13 @@ function showSuiteResult(){
 function recordRun(data,id){
  const suite=data.suite==='ccmax'?'ccmax':'kimi';
  suiteRuns.set(suite,{id,data});runningSuite=suite;setActive(data.status==='running');
+ if(data.history_saved&&data.history_id&&!historyNotified.has(data.history_id)){historyNotified.add(data.history_id);window.dispatchEvent(new CustomEvent('workbench:history-saved',{detail:{id:data.history_id,kind:suite}}));}
  if(selected===suite)render(data,id);
 }
 function selectSuite(value){
  if(active&&value!=='general'&&value!==runningSuite)return;
  selected=value;updateServiceBadge();document.querySelectorAll('[data-suite]').forEach(b=>{b.classList.toggle('active',b.dataset.suite===value);b.setAttribute('aria-selected',String(b.dataset.suite===value));});
+ if(el('generalHistorySaveStatus'))el('generalHistorySaveStatus').hidden=value!=='general';
  el('legacyFrame').hidden=value!=='general';el('acceptancePanel').hidden=value==='general';
  if(value!=='general'){
   for(const [to,from] of [['acceptanceBase','base'],['acceptanceKey','key'],['acceptanceModel','model']])if(!el(to).value)el(to).value=el(from).value;
@@ -118,8 +120,14 @@ function render(data,id){
  if(result?.error)message(result.error,true);
  const events=data.events||[],cases=result?(result.cases||result.checks||[]):latestEventCases(events);
  const transportCases=(result?.transport?.checks||[]).filter(x=>x.status!=='passed');el('acceptanceCases').replaceChildren(...cases.slice(-700).map(renderCase),...transportCases.map(renderCase));
+ renderHistoryState(data,id);
  el('acceptanceLog').textContent=result?.log||events.slice(-20).map(e=>e.message||e.case?.id||`${e.completed??''}${e.total?' / '+e.total:''}`).join('\n');
  syncDownloads();
+}
+function renderHistoryState(data,id){
+ let box=el('acceptanceHistorySaveStatus');if(!box){box=make('div','history-save-status');box.id='acceptanceHistorySaveStatus';el('acceptanceProgress').append(box);}box.replaceChildren();box.hidden=data.status==='running'||(!data.history_saved&&!data.history_error);
+ if(box.hidden)return;box.setAttribute('role','status');box.className='history-save-status is-'+(data.history_saved?'saved':'error');box.append(make('span','',data.history_saved?'已保存到历史记录':'历史记录未保存，请重试'));
+ if(!data.history_saved){const retry=make('button','text-button','重试保存');retry.type='button';retry.addEventListener('click',async()=>{retry.disabled=true;try{await api('/api/runs/'+id+'/history',{method:'POST',body:'{}'});const refreshed=await(await api('/api/runs/'+id)).json();if(id===runId)recordRun(refreshed,id);else{const suite=refreshed.suite==='ccmax'?'ccmax':'kimi';if(suiteRuns.get(suite)?.id===id)suiteRuns.set(suite,{id,data:refreshed});if(displayedRunId===id)render(refreshed,id);if(refreshed.history_saved)window.dispatchEvent(new CustomEvent('workbench:history-saved',{detail:{id:refreshed.history_id,kind:suite}}));}}catch(e){box.firstChild.textContent='历史记录未保存：'+e.message;retry.disabled=false;}});box.append(retry);}
 }
 async function poll(){
  if(!runId)return;

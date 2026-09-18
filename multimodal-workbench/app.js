@@ -4,7 +4,7 @@ const kinds={text:{name:'文本',icon:'Aa',prompt:'用中文简短介绍你能�
 let lastPresetId=null,modelAdvice=null;
 let kind='text',records=[],logs=[],controller=null,busy=false,timer=null,inputUrls=[],drafts={},fileDrafts={},referenceFiles=[],legacyLoaded=false;
 let progressState=null;
-const secrets=new Set(),localMediaUrls=new Set();
+const secrets=new Set(),localMediaUrls=new Set(),historyTasks=new Map();
 const draftIds=['preset','model','prompt','size','duration','resolution','voice','format','speed','language','path','auth','timeout','pollInterval','pollPath','contentPath','pollTimeout','extra','batch','imageMode'];
 const initialFieldValues=Object.fromEntries(draftIds.map(id=>[id,$(id).value]));
 const E=window.MediaEngine;
@@ -428,7 +428,7 @@ async function run(resumeId=null){
   if(!logs.length)$('logs').replaceChildren();
   try{
     for(let i=0;i<configs.length;i++){
-      if(signal.aborted)break;const c=configs[i],t=performance.now();
+      if(signal.aborted)break;const c=configs[i],t=performance.now(),startedAt=Date.now();
       beginProgress(c,i,configs.length,resumeId);
       $('runningLabel').textContent=`${resumeId?'查询任务':'正在测试'} · ${c.model}${configs.length>1?` (${i+1}/${configs.length})`:''}`;
       log(`${resumeId?'继续查询':'开始测试'} ${kinds[kind].name} / ${c.model}`);
@@ -442,9 +442,20 @@ async function run(resumeId=null){
       }
       if(result.taskId)$('taskId').value=String(result.taskId);
       const rec={...result,id:crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random()),kind,model:c.model,preset:selectedPreset().label,createdAt:new Date().toISOString(),config:safeSnapshot(c),elapsedMs:result.elapsedMs??performance.now()-t};
-      addRecord(rec);if(signal.aborted)break;
+      addRecord(rec);saveBasicHistory(rec,c,startedAt,resumeId);if(signal.aborted)break;
     }
   }finally{setBusy(false);}
+}
+function saveBasicHistory(r,c,startedAt,resumeId){
+  if(!window.HistoryCapture||r.status==='demo')return;
+  const task=r.taskId||resumeId,taskKey=task?JSON.stringify([c.base,c.model,c.preset,String(task)]):'';
+  const prior=taskKey?historyTasks.get(taskKey):null;
+  const identity=prior||{id:r.id,createdAt:startedAt,duration:0,requests:[]};
+  identity.duration+=r.elapsedMs||0;identity.requests.push(...scrub(r.requests||[]));if(taskKey)historyTasks.set(taskKey,identity);
+  const media=(r.media||[]).map(m=>({type:m.kind,mime:m.mime,url:m.url}));
+  const safeResult=scrub({...r,elapsedMs:identity.duration,requests:identity.requests,media:(r.media||[]).map(m=>({kind:m.kind,mime:m.mime,storage:'见记录中的媒体文件'}))});
+  const container=$('results').querySelector('[data-id="'+r.id+'"] .history-save-status');
+  return window.HistoryCapture.record({client_id:identity.id,kind:r.kind,source:'basic',title:kinds[r.kind].name+'测试 · '+r.model,model:r.model,base:c.base,prompt:c.prompt,status:({success:'passed',error:'failed',stopped:'cancelled',pending:'pending'})[r.status]||'inconclusive',created_at:identity.createdAt/1000,duration_ms:identity.duration,result:safeResult,media},{key:c.key,container});
 }
 function visibleMediaUrl(media){
   const url=localMediaUrls.has(media.url)?media.url:E.safeUrl(media.url,media.kind);if(!url)return null;
@@ -499,7 +510,7 @@ function renderRecord(r,prepend=false){
   if(r.media?.length){const grid=node('div','media-grid');r.media.forEach((m,i)=>grid.append(mediaItem(m,i)));body.append(grid);}
   if(r.status==='unrecognized'&&(r.text||r.media?.length))body.append(node('p','task-note','未获得与所选测试类型匹配的有效输出，请检查下方原始响应。'));
   if(!r.text&&!r.media?.length&&!r.error&&r.status!=='pending')body.append(node('p','task-note','响应中没有识别到可展示内容，请展开原始响应核对字段和状态。'));
-  renderCoverage(body,r);card.append(body);
+  renderCoverage(body,r);card.append(body);if(r.status!=='demo'){const saved=node('div','history-save-status');card.append(saved);}
   const details=node('details','raw-details');details.append(node('summary','','查看原始响应与请求记录'));
   const actions=node('div','raw-tools');const download=node('button','text-button','下载响应 JSON');download.addEventListener('click',()=>downloadBlob(new Blob([JSON.stringify(scrub({config:r.config,result:{...r,config:undefined}}),null,2)],{type:'application/json'}),'response-'+cleanFilename(r.model)+'.json'));actions.append(download);details.append(actions);
   const pre=node('pre','',JSON.stringify(scrub({response:r.raw,requests:r.requests},true),null,2));details.append(pre);card.append(details);
@@ -541,7 +552,7 @@ async function exportReport(){
   }catch(e){notify('导出失败：'+e.message,true);}finally{setBusy(false);}
 }
 function clearResults(){
-  if(busy)return;for(const r of records)for(const m of r.media||[])if(m.owned||m.url.startsWith('blob:'))URL.revokeObjectURL(m.url);
+  if(busy)return;for(const r of records)for(const m of r.media||[])if(m.owned||m.url.startsWith('blob:'))(window.HistoryCapture?.releaseMedia||URL.revokeObjectURL.bind(URL))(m.url);
   localMediaUrls.clear();records=[];logs=[];$('results').replaceChildren();$('logs').replaceChildren(node('p','log-placeholder','请求状态与视频任务进度将在这里记录。'));$('resultCount').textContent='0';$('logCount').textContent='0 条';$('empty').hidden=false;$('exportBtn').disabled=true;$('clearBtn').disabled=true;notify('');
 }
 async function showDemo(){
@@ -598,3 +609,11 @@ function initChoicePickers(){
   attach('voice','音色',['alloy','nova','shimmer','coral','Kore','Puck','Aoede']);
 }
 fillPresets();$('prompt').value=kinds.text.prompt;applyPreset();initChoicePickers();updatePromptScenarios();renderInputPreview();
+
+window.addEventListener('message',event=>{
+  const frame=$('legacyFrame');if(event.source!==frame?.contentWindow)return;
+  if(event.origin!==location.origin&&!(location.protocol==='file:'&&event.origin==='null'))return;
+  const data=event.data;if(!data||data.type!=='workbench:general-history'||!data.record||data.record.kind!=='general'||data.record.source!=='general'||typeof data.record.client_id!=='string')return;
+  let holder=$('generalHistorySaveStatus');if(!holder){holder=node('div','history-save-status');holder.id='generalHistorySaveStatus';frame.parentNode.insertBefore(holder,frame);}
+  if(window.HistoryCapture)window.HistoryCapture.record(data.record,{container:holder});
+});

@@ -393,7 +393,7 @@ async function download(page, format, bytes) {
         if (restoredSuite !== 'ccmax') assert.equal(await page.locator('#acceptanceScope').inputValue(), restoredSuite);
         await page.reload();await page.waitForFunction(() => document.getElementById('acceptanceStage').textContent.includes('已完成'));
         await assertSuiteIdentity(page, restoredSuite === 'ccmax' ? 'ccmax' : 'kimi');
-        assert.equal(state.session, 2);assert.equal(state.posts.length, 0, 'refresh restores completed evidence without resubmission');
+        assert.equal(state.session, 4, 'acceptance and history each read the session after both page loads');assert.equal(state.posts.length, 0, 'refresh restores completed evidence without resubmission');
         await screenshot(page, 'desktop-latest-' + restoredSuite + '.png');
       } finally { await f.close(); }
     }
@@ -511,7 +511,7 @@ async function download(page, format, bytes) {
     passed.push('completed reports restore actual quick/batch/custom sampling and allowed configuration without secrets; active unknown settings are not inferred');
     {
       const f = await fixture(browser);try {
-        assert.match(await f.page.locator('.local-badge').innerText(), /v1\.10/);
+        assert.match(await f.page.locator('.local-badge').innerText(), /v1\.11/);
       } finally { await f.close(); }
     }
     for (const selectedBeforeConnection of ['ccmax', 'kimi']) {
@@ -521,14 +521,14 @@ async function download(page, format, bytes) {
         await assertSuiteIdentity(page, selectedBeforeConnection === 'ccmax' ? 'kimi' : 'ccmax', 'connecting');
         await suite(page, selectedBeforeConnection);await assertSuiteIdentity(page, selectedBeforeConnection, 'connecting');
         assert.equal(await page.locator('#acceptanceRun').isDisabled(), true);
-        assert.equal(state.sessionPending.length, 1);
+        assert.equal(state.sessionPending.length, 2, 'acceptance and history independently check the initial session');
         state.sessionHold = false;state.sessionPending.shift()();
         await page.waitForFunction(() => document.getElementById('acceptanceService').textContent.includes('已连接'));
         await assertSuiteIdentity(page, selectedBeforeConnection);
         for (const next of ['ccmax', 'kimi', 'ccmax', 'kimi']) { await suite(page, next);await assertSuiteIdentity(page, next); }
         await suite(page, 'general');assert.equal(await page.locator('#acceptancePanel').isVisible(), false);
         await suite(page, 'ccmax');await assertSuiteIdentity(page, 'ccmax');
-        assert.equal(state.posts.length, 0);assert.equal(state.session, 1, 'suite switching does not create another service connection or run');
+        assert.equal(state.posts.length, 0);assert.equal(state.session, 2, 'suite switching does not create another service connection or run');
         await screenshot(page, 'desktop-ccmax-service-badge.png');
         await suite(page, 'kimi');await screenshot(page, 'desktop-kimi-service-badge.png');
       } finally { for (const resolve of state.sessionPending) resolve();await f.close(); }

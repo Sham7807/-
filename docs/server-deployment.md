@@ -15,6 +15,8 @@
 | HTTPS 入口 | `18877` |
 | 网关配置 | `/etc/xiaoxiao-workbench/nginx.conf` |
 | 报告目录 | `/var/lib/xiaoxiao-workbench/reports` |
+| 历史数据库 | `/var/lib/xiaoxiao-workbench/data/workbench.sqlite3` |
+| 历史媒体 | 与 SQLite 一起保存（媒体 Blob） |
 | 服务 | `xiaoxiao-workbench.service`、`xiaoxiao-gateway.service` |
 | 证书检查 | `xiaoxiao-certificate.timer` |
 
@@ -33,6 +35,7 @@
 - 转发 `Host: 127.0.0.1:18878` 与 `Origin: http://127.0.0.1:18878`，保留 `X-Workbench-Token`。
 - 验证 Basic Auth 后清除发给后端的 `Authorization`。
 - 使用根路径部署，前端 API 路径以 `/api/` 开头。
+- 登录后页面使用 HttpOnly、SameSite=Strict 会话 Cookie；除 `/api/session` 外的 API 还需要页面令牌。`/api/history/*/media/*` 允许浏览器原生媒体元素只凭会话 Cookie 读取。
 - 仅放行外部 HTTPS 端口；18878 保持只监听环回地址。
 
 文本、图片、视频和音频基础请求仍由浏览器直连渠道，渠道需要允许 CORS，并在 HTTPS 页面下提供 HTTPS 接口。CCMax / KVV 请求由服务器发起。
@@ -44,6 +47,16 @@
 `xiaoxiao-certificate.timer` 每 6 小时检查一次。TLS-ALPN-01 验证期间需要空闲且公网可达的 TCP 443；证书签发结束后释放 443，网站仍在 18877 提供服务。未来若其他项目使用 443，应先调整证书验证方式。续期成功的部署钩子只校验和 reload 本项目网关。
 
 ## 日常维护
+
+服务认证与历史记录由以下环境变量配置：
+
+```ini
+WORKBENCH_AUTH_FILE=/etc/xiaoxiao-workbench/auth.json
+WORKBENCH_DB=/var/lib/xiaoxiao-workbench/data/workbench.sqlite3
+WORKBENCH_REPORTS=/var/lib/xiaoxiao-workbench/reports
+```
+
+`auth.json` 只保存 `username` 与 scrypt `password_hash`，不要把明文密码或该文件提交到 Git。数据库启用 SQLite WAL，备份时先停止本项目服务或同时保留 `-wal` / `-shm` 文件。媒体大小限制为单个 16 MiB、全部 32 MiB；远程媒体只保存经过脱敏的链接，不由服务器抓取。
 
 ```bash
 systemctl status xiaoxiao-workbench xiaoxiao-gateway

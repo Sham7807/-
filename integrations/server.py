@@ -16,15 +16,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, urlunsplit
 import kvv_runner
 from acceptance_results import decorate
+from auth_history import Store, COOKIE_NAME, MAX_BODY
 
 ROOT = Path(__file__).resolve().parent
 WORKSPACE = ROOT.parent
 WEB = WORKSPACE / 'multimodal-workbench'
-REPORTS = ROOT / 'reports'
+REPORTS = Path(os.environ.get('WORKBENCH_REPORTS', str(ROOT / 'reports')))
 TOKEN = secrets.token_urlsafe(32)
 JOBS = {}
 LOCK = threading.RLock()
 SUITES = {'kvv11', 'kvvfull', 'ccmax'}
+AUTH_STORE = Store(os.environ.get('WORKBENCH_DB', str(ROOT / 'workbench.sqlite3')), os.environ.get('WORKBENCH_AUTH_FILE') or None)
 
 def clean(value, key=''):
     if isinstance(value, dict):
@@ -99,6 +101,12 @@ def run_job(job,c):
         job['summary']=result.get('summary',{})
         if job['summary'].get('total') is not None: job['total']=job['summary']['total']
         job['completed']=job['summary'].get('completed',job['completed'])
+    try:
+        saved = AUTH_STORE.save_acceptance(result)
+        job['history_id'] = saved.get('id'); job['history_saved'] = True
+    except Exception as exc:
+        job['history_saved'] = False
+        job['history_error'] = str(exc)
     c['key']=''
 
 def snapshot(job):
@@ -111,12 +119,32 @@ def report_html(result, directory=None):
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
-    def guard(self,auth=False):
+    def cookie_token(self):
+        raw = self.headers.get('Cookie', '')
+        for part in raw.split(';'):
+            key, sep, value = part.strip().partition('=')
+            if sep and key == COOKIE_NAME:
+                return value
+        return ''
+    def set_session_cookie(self, token):
+        secure = os.environ.get('WORKBENCH_COOKIE_SECURE', '1') != '0'
+        value = f'{COOKIE_NAME}={token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Strict'
+        if secure: value += '; Secure'
+        self.send_header('Set-Cookie', value)
+    def clear_session_cookie(self):
+        self.send_header('Set-Cookie', f'{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+    def guard(self,auth=False,token_required=True):
         expected=f'127.0.0.1:{self.server.server_port}'
         if self.headers.get('Host') != expected: self.send_json(403,{'error':'仅允许本地工作台访问'}); return False
         origin=self.headers.get('Origin')
         if origin and origin != 'http://'+expected: self.send_json(403,{'error':'请求来源不匹配，请从本地工作台打开'}); return False
-        if auth and not secrets.compare_digest(self.headers.get('X-Workbench-Token',''),TOKEN): self.send_json(403,{'error':'会话已过期，请刷新页面'}); return False
+        if auth:
+            if AUTH_STORE.enabled and not AUTH_STORE.identity(self.cookie_token()):
+                # Browser pages are redirected; API clients receive a neutral 401.
+                if self.path.startswith('/api/'):
+                    self.send_json(401, {'error':'请先登录'}); return False
+                self.send_response(302); self.send_header('Location','/login'); self.end_headers(); return False
+            if token_required and not secrets.compare_digest(self.headers.get('X-Workbench-Token',''),TOKEN): self.send_json(403,{'error':'会话已过期，请刷新页面'}); return False
         return True
     def send_bytes(self,status,data,mime,filename=None):
         self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)))
@@ -126,11 +154,69 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(data)
     def send_json(self,status,data): self.send_bytes(status,json.dumps(data,ensure_ascii=False).encode(),'application/json; charset=utf-8')
     def do_GET(self):
-        if not self.guard():return
         path=urlsplit(self.path).path
-        if path=='/api/session':
+        if path in ('/login','/login.html','/login.css','/login.js','/api/auth'):
+            if not self.guard(auth=False): return
+            if path == '/api/auth':
+                identity = AUTH_STORE.identity(self.cookie_token()) if AUTH_STORE.enabled else 'local'
+                data = {'enabled': AUTH_STORE.enabled, 'authenticated': bool(identity)}
+                if identity: data['username'] = identity
+                return self.send_json(200, data)
+            target = WEB / ('login.html' if path in ('/login','/login.html') else path[1:])
+            if not target.is_file(): return self.send_json(404, {'error':'Not found'})
+            return self.send_bytes(200,target.read_bytes(),(mimetypes.guess_type(target.name)[0] or 'text/plain')+'; charset=utf-8')
+        if path == '/api/session':
+            # This endpoint authenticates the browser and issues the per-page token.
+            if not self.guard(auth=True, token_required=False): return
             with LOCK: active=next((j['id'] for j in JOBS.values() if j['status']=='running'),None)
-            return self.send_json(200,{'token':TOKEN,'active':active,'latest':next(reversed(JOBS),None),'kvv_revision':'66092cf','ready':True})
+            return self.send_json(200,{'token':TOKEN,'active':active,'latest':next(reversed(JOBS),None),'kvv_revision':'66092cf','ready':True,'auth_enabled':AUTH_STORE.enabled,'username':AUTH_STORE.identity(self.cookie_token()) if AUTH_STORE.enabled else None,'history_enabled':True})
+        media_asset = bool(re.fullmatch(r'/api/history/[^/]+/media/\d+', path))
+        protected = path.startswith('/api/') and path != '/api/auth'
+        if (protected and path != '/api/session'):
+            # Native <img>/<video>/<audio> requests cannot attach the page
+            # token; the HttpOnly session cookie still protects stored media.
+            if not self.guard(auth=True, token_required=not media_asset):return
+        elif AUTH_STORE.enabled:
+            # HTML/CSS/JS navigation is authorized by the login cookie. The
+            # per-page token is required only for API mutations and history.
+            if not self.guard(auth=True, token_required=False):return
+        elif not self.guard(auth=False):
+            return
+        if path == '/api/history':
+            try:
+                query = urlsplit(self.path).query
+                from urllib.parse import parse_qs
+                q = parse_qs(query)
+                data = AUTH_STORE.listing(kind=q.get('kind',[''])[0], status=q.get('status',[''])[0], q=q.get('q',[''])[0], offset=int(q.get('offset',['0'])[0]), limit=int(q.get('limit',['20'])[0]))
+                return self.send_json(200, data)
+            except Exception as exc: return self.send_json(400, {'error':str(exc)})
+        if path.startswith('/api/history/'):
+            parts = path.split('/')
+            identity = parts[3] if len(parts)>3 else ''
+            if len(parts) == 4:
+                record = AUTH_STORE.detail(identity)
+                return self.send_json(200, record) if record else self.send_json(404, {'error':'历史记录不存在'})
+            if len(parts) == 6 and parts[4] == 'media':
+                try: media = AUTH_STORE.media(identity, int(parts[5]))
+                except ValueError: media = None
+                if not media: return self.send_json(404, {'error':'媒体不存在'})
+                blob = media['data']; start, end = 0, len(blob)-1
+                range_header = self.headers.get('Range','')
+                if range_header.startswith('bytes='):
+                    try:
+                        spec = range_header[6:].split(',',1)[0]; left,right = spec.split('-',1)
+                        if left: start=int(left); end=int(right) if right else len(blob)-1
+                        else: start=max(0,len(blob)-int(right)); end=len(blob)-1
+                        if start<0 or end>=len(blob) or start>end: raise ValueError()
+                    except ValueError: return self.send_json(416, {'error':'Range 无效'})
+                    chunk=blob[start:end+1]; self.send_response(206); self.send_header('Content-Range',f'bytes {start}-{end}/{len(blob)}')
+                else: chunk=blob; self.send_response(200)
+                self.send_header('Content-Type',media['mime']); self.send_header('Content-Length',str(len(chunk))); self.send_header('Accept-Ranges','bytes'); self.send_header('Cache-Control','private, no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(chunk); return
+            if len(parts) == 5 and parts[4] == 'report.json':
+                record = AUTH_STORE.detail(identity)
+                if not record: return self.send_json(404, {'error':'历史记录不存在'})
+                return self.send_bytes(200,json.dumps(record,ensure_ascii=False,indent=2).encode(),'application/json','history-report.json')
+            return self.send_json(404, {'error':'历史资源不存在'})
         if path.startswith('/api/runs/'):
             if not self.guard(auth=True):return
             parts=path.split('/');job=JOBS.get(parts[3])
@@ -156,8 +242,38 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():return self.send_json(404,{'error':'Not found'})
         return self.send_bytes(200,target.read_bytes(),(mimetypes.guess_type(target.name)[0] or 'text/plain')+'; charset=utf-8')
     def do_POST(self):
-        if not self.guard(auth=True):return
         path=urlsplit(self.path).path
+        if path == '/api/auth/login':
+            if not self.guard(auth=False): return
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if length <= 0 or length > 65536: raise ValueError('请求长度无效')
+                data=json.loads(self.rfile.read(length)); token,error=AUTH_STORE.login(data.get('username'),data.get('password'),self.client_address[0],self.cookie_token())
+                if error == 'rate_limited': return self.send_json(429, {'error':'登录尝试过于频繁，请稍后再试'})
+                if not token: return self.send_json(401, {'error':'用户名或密码错误'})
+                self.send_response(200); self.send_header('Content-Type','application/json; charset=utf-8'); self.set_session_cookie(token); self.send_header('Content-Length','0'); self.end_headers(); return
+            except Exception as exc: return self.send_json(400, {'error':str(exc)})
+        if not self.guard(auth=True):return
+        if path == '/api/auth/logout':
+            AUTH_STORE.logout(self.cookie_token()); self.send_response(200); self.send_header('Content-Type','application/json; charset=utf-8'); self.clear_session_cookie(); self.send_header('Content-Length','0'); self.end_headers(); return
+        if path == '/api/history':
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if length <= 0 or length > MAX_BODY: raise ValueError('历史记录请求过大')
+                data=json.loads(self.rfile.read(length)); saved=AUTH_STORE.save(data)
+                return self.send_json(200, saved)
+            except Exception as exc: return self.send_json(400, {'error':str(exc)})
+        history_match = re.fullmatch(r'/api/runs/([a-f0-9]+)/history', path)
+        if history_match:
+            job = JOBS.get(history_match.group(1))
+            if not job or not job.get('result'): return self.send_json(404, {'error':'任务报告不存在'})
+            try:
+                saved = AUTH_STORE.save_acceptance(job['result'])
+                job['history_id'] = saved.get('id'); job['history_saved'] = True; job.pop('history_error', None)
+                return self.send_json(200, saved)
+            except Exception as exc:
+                job['history_saved'] = False; job['history_error'] = str(exc)
+                return self.send_json(500, {'error':'历史记录保存失败，请稍后重试'})
         if re.fullmatch(r'/api/runs/[a-f0-9]+/cancel',path):
             job=JOBS.get(path.split('/')[3])
             if not job:return self.send_json(404,{'error':'任务不存在'})
@@ -201,10 +317,21 @@ def restore_reports():
                 'status':result.get('status','error'),'started_at':result.get('started_at',path.stat().st_mtime),
                 'finished_at':result.get('finished_at',path.stat().st_mtime),'total':summary.get('total'),
                 'completed':summary.get('completed',0),'summary':summary,'events':[],'result':result,'cancel':threading.Event()}
+            # Backfill the durable history index for reports created before SQLite history.
+            try:
+                AUTH_STORE.save_acceptance(result, only_missing=True)
+            except Exception:
+                pass
         except (ValueError,OSError):continue
     # Editing a derived report must not make an older run the latest run.
     ordered=sorted(JOBS.items(),key=lambda item:item[1]['started_at'])
     JOBS.clear();JOBS.update(ordered)
+    for job in JOBS.values():
+        try:
+            saved = AUTH_STORE.save_acceptance(job.get('result') or {}, only_missing=True)
+            job['history_id'] = saved.get('id'); job['history_saved'] = True
+        except Exception as exc:
+            job['history_saved'] = False; job['history_error'] = str(exc)
 
 def main():
     restore_reports()

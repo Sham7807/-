@@ -6,9 +6,11 @@
 <title>小小宇宙无敌 · 多模态渠道测试台</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="acceptance.css">
+<link rel="stylesheet" href="history.css">
 </head>
 <body>
-<header class="topbar"><div class="brand"><span class="brand-icon">宇<span>↗</span></span><div>小小宇宙无敌<small>多模态渠道测试台</small></div></div><div class="top-actions"><span class="header-label">MODEL TESTING STUDIO</span><span class="local-badge"><i></i> 本地会话 <span>v1.10</span></span></div></header>
+<header class="topbar"><div class="brand"><span class="brand-icon">宇<span>↗</span></span><div>小小宇宙无敌<small>多模态渠道测试台</small></div></div><nav class="workspace-nav" aria-label="工作区"><button id="workspaceTab" class="active" aria-current="page" type="button">工作台</button><button id="historyTab" type="button">历史记录 <span id="historyNavCount" hidden>0</span></button></nav><div class="top-actions"><span class="local-badge" id="sessionLabel"><i></i><span id="sessionMode">本地会话</span><span>v1.11</span></span><div id="accountMenu" class="account-menu" hidden><span id="accountName"></span><button id="logoutButton" type="button">退出</button></div></div></header>
+<div id="sessionNotice" class="session-notice" role="alert" hidden></div>
 <main id="workbench">
 <section class="intro"><div><div class="eyebrow"><span></span> YOUR MODELS, IN ONE PLACE</div><h1>连接模型<span>。</span>看见结果<span>。</span></h1><p>从一次真实请求开始，检验每一个渠道。</p></div><div class="intro-note"><span>一个工作台，四种模态</span><p>自由选择协议与模型，直接预览生成内容。</p></div></section>
 <div class="kind-tabs" role="tablist" aria-label="模型类型">
@@ -103,13 +105,23 @@
 <div class="acceptance-output"><div id="acceptancePlan"></div><div id="acceptanceProgress" hidden><div class="acceptance-progress-head"><b id="acceptanceStage">准备测试</b><span id="acceptanceCount"></span></div><progress id="acceptanceBar" max="100" value="0"></progress><div class="acceptance-timing"><span id="acceptanceElapsed"></span><span id="acceptanceEta"></span></div><div id="acceptanceSummary"></div><div id="acceptanceVerdict" class="acceptance-verdict" hidden></div><div class="acceptance-report-actions"><button class="secondary" type="button" data-acceptance-download="report.html" disabled>下载 HTML 报告</button><button class="secondary" type="button" data-acceptance-download="evidence.zip" disabled>下载证据包</button><button class="text-button" type="button" data-acceptance-download="report.json" disabled>JSON</button></div><div id="acceptanceCases" aria-live="polite"></div><details><summary>执行日志</summary><pre id="acceptanceLog"></pre></details></div></div></div>
 <p id="acceptanceFootnote" class="acceptance-footnote">本地服务执行测试并保存脱敏证据。预检是抽样，全套是官方四套 API 验证，不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 能力评测。</p>
 </section><iframe id="legacyFrame" title="文本模型深度检测" sandbox="allow-scripts allow-same-origin allow-downloads allow-modals" referrerpolicy="no-referrer"></iframe></section>
-<footer><span><b>小小宇宙无敌</b> / MULTIMODAL WORKBENCH</span><span>密钥不写入配置 · 基础结果保留在本页 · 专项验收保存脱敏报告</span></footer>
+<footer><span><b>小小宇宙无敌</b> / MULTIMODAL WORKBENCH</span><span>密钥不写入配置 · 服务模式保存测试历史 · 独立 HTML 保留本页结果</span></footer>
 </main>
+<main id="historyView" class="history-view" hidden aria-labelledby="historyTitle">
+<section class="history-intro"><div><div class="eyebrow"><span></span> YOUR TEST ARCHIVE</div><h1 id="historyTitle">每次测试<span>，</span>都有迹可循<span>。</span></h1><p id="historySubtitle">回看提示词、生成内容与检测证据，让下一次判断更有依据。</p></div><button type="button" class="history-refresh secondary" id="historyRefresh">↻ 刷新记录</button></section>
+<div id="historyStats" class="history-stats" aria-label="历史概览"><div><span>全部测试</span><b id="historyTotal">—</b><small>已保存的真实记录</small></div><div><span>通过 / 成功</span><b id="historyPassed">—</b><small>接口结果或检测结论</small></div><div><span>需要关注</span><b id="historyFailed">—</b><small>失败与异常响应</small></div><div><span>其他状态</span><b id="historyOther">—</b><small>待完成、停止或待确认</small></div></div>
+<section class="history-panel" aria-label="测试记录"><div class="history-toolbar"><div class="history-search"><span aria-hidden="true">⌕</span><input id="historySearch" type="search" placeholder="搜索模型、渠道或提示词" aria-label="搜索历史记录" autocomplete="off"></div><div class="history-filters"><label>类型<select id="historyKind"><option value="">全部类型</option><option value="text">文本</option><option value="image">图像</option><option value="video">视频</option><option value="audio">音频</option><option value="general">通用检测</option><option value="ccmax">CCMax</option><option value="kimi">Kimi KVV</option></select></label><label>结果<select id="historyStatus"><option value="">全部结果</option><option value="passed">通过 / 成功</option><option value="failed">失败</option><option value="other">其他状态</option></select></label></div></div>
+<div id="historyList" class="history-list" aria-live="polite"></div><div id="historyListState" class="history-list-state" role="status"><span class="history-empty-symbol">↺</span><h2>正在连接历史记录</h2><p>记录将保存在当前工作台的数据库中。</p></div><div id="historyPagination" class="history-pagination" hidden><span id="historyRange"></span><div><button id="historyPrevious" type="button" class="secondary">← 上一页</button><button id="historyNext" type="button" class="secondary">下一页 →</button></div></div></section>
+<p class="history-storage-note" id="historyStorageNote">数据库保存测试内容与脱敏结果，不保存渠道密钥。远程媒体链接可能过期；已存储的媒体可直接回看。</p>
+</main>
+<dialog id="historyDetail" class="history-detail" aria-labelledby="historyDetailTitle"><div class="history-detail-head"><div><small>TEST RECORD</small><h2 id="historyDetailTitle">测试详情</h2></div><button id="historyDetailClose" class="history-close" type="button" aria-label="关闭测试详情">×</button></div><div id="historyDetailBody" class="history-detail-body"></div></dialog>
 <dialog id="previewDialog"><div class="dialog-head"><h2>实际请求预览</h2><button id="closePreview" class="secondary">关闭</button></div><p>不发送请求。密钥已隐藏；附加 JSON 参数已合并。</p><pre id="requestPreview"></pre></dialog>
 <script src="engine.js"></script>
 <script src="media-download.js"></script>
 <script src="choice-picker.js"></script>
 <script src="prompts.js"></script>
+<script src="history-capture.js"></script>
 <script src="app.js"></script>
 <script src="acceptance.js"></script>
+<script src="history.js"></script>
 </body></html>
