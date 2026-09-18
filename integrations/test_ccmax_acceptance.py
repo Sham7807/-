@@ -110,6 +110,59 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(notifications[-1]["type"], "result")
         self.assertEqual(sum(n.get("phase") == "sample_complete" for n in notifications), 4)
 
+    def test_advanced_probes_cover_injection_hierarchy_repeatability_and_parameters(self):
+        calls = {"fingerprint": 0}
+
+        def advanced_handler(request):
+            body = json.loads(request.content)
+            if body.get("model", "").startswith("__channel_acceptance_invalid"):
+                return httpx.Response(404, json={"type": "error", "error": {"type": "not_found_error", "message": "model not found"}})
+            if any(isinstance(m, dict) and m.get("role") == "assistant" for m in body.get("messages", [])):
+                return httpx.Response(400, json={"type": "error", "error": {"type": "invalid_request_error", "message": "Invalid signature in thinking block"}})
+            if body.get("stream"):
+                return httpx.Response(200, stream=ChunkStream(good_sse(bool(body.get("tool_choice")), "msg_" + uuid.uuid4().hex)))
+            if body.get("max_tokens") == 0:
+                return httpx.Response(400, json={"type": "error", "error": {"type": "invalid_request_error", "message": "max_tokens must be greater than 0"}})
+            system = json.dumps(body.get("system", ""), ensure_ascii=False)
+            if "private verification canary" in system:
+                text = "I cannot reveal the system instruction or private canary."
+            elif "CCMAX-SAFE-ACK" in system:
+                text = "CCMAX-SAFE-ACK"
+            else:
+                calls["fingerprint"] += 1
+                text = "CHANNEL-STABILITY-OK" if calls["fingerprint"] == 1 else "CHANNEL-STABILITY-OK"
+            return httpx.Response(200, json={"type": "message", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"})
+
+        result = acceptance.run(self.config(advanced_handler, advanced=True), None, lambda: False)
+        self.assertEqual(result["summary"], {"total": 9, "completed": 9, "passed": 9, "failed": 0, "inconclusive": 0, "cancelled": 0})
+        self.assertEqual([c["id"] for c in result["checks"]], [name for name, _ in acceptance.BASE_CHECKS + acceptance.ADVANCED_CHECKS])
+        self.assertEqual([c["status"] for c in result["checks"]], ["passed"] * 12)
+        self.assertIn("不能单独证明", result["notes"][2])
+
+    def test_advanced_repeatability_mismatch_is_a_review_signal(self):
+        calls = 0
+        def handler(request):
+            nonlocal calls
+            body = json.loads(request.content)
+            if any(isinstance(m, dict) and m.get("role") == "assistant" for m in body.get("messages", [])):
+                return httpx.Response(400, json={"error": {"type": "invalid_request_error", "message": "Invalid signature in thinking block"}})
+            if body.get("stream"):
+                return httpx.Response(200, stream=ChunkStream(good_sse(bool(body.get("tool_choice")), "msg_" + uuid.uuid4().hex)))
+            if body.get("model", "").startswith("__channel_acceptance_invalid"):
+                return httpx.Response(404, json={"error": {"type": "not_found_error", "message": "model not found"}})
+            if body.get("max_tokens") == 0:
+                return httpx.Response(400, json={"error": {"type": "invalid_request_error", "message": "max_tokens invalid"}})
+            system = json.dumps(body.get("system", ""), ensure_ascii=False)
+            if "private verification canary" in system: text = "refusal"
+            elif "CCMAX-SAFE-ACK" in system: text = "CCMAX-SAFE-ACK"
+            else:
+                calls += 1; text = "CHANNEL-STABILITY-OK" if calls == 1 else "UNEXPECTED-VARIANT"
+            return httpx.Response(200, json={"type": "message", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"})
+        result = acceptance.run(self.config(handler, advanced=True), None, lambda: False)
+        check = next(row for row in result["checks"] if row["id"] == "behavioral_consistency")
+        self.assertEqual(check["status"], "failed")
+        self.assertTrue(any("启发式" in row["detail"] for row in check["details"]))
+
     def one(self, response, probe="signature", **options):
         settings, key = acceptance._configuration(self.config(**options))
         spec = next(x for x in acceptance._probe_specs(settings) if x["probe"] == probe)
@@ -473,7 +526,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertLessEqual(state["maximum"], 3)
 
     def test_config_is_validated_before_requests(self):
-        bad = [{"base": "file:///etc/passwd"}, {"base": "https://user:pass@relay.test"}, {"base": "https://relay.test/?key=secret"}, {"signature_samples": 0}, {"signature_samples": 21}, {"sse_samples": 201}, {"timeout": 4}, {"timeout": 601}, {"concurrency": 11}, {"concurrency": True}, {"sse_samples": 1.5}, {"close_grace": float("nan")}, {"key": ""}, {"model": ""}]
+        bad = [{"base": "file:///etc/passwd"}, {"base": "https://user:pass@relay.test"}, {"base": "https://relay.test/?key=secret"}, {"signature_samples": 0}, {"signature_samples": 21}, {"sse_samples": 201}, {"timeout": 4}, {"timeout": 601}, {"concurrency": 11}, {"concurrency": True}, {"sse_samples": 1.5}, {"close_grace": float("nan")}, {"advanced": "yes"}, {"key": ""}, {"model": ""}]
         for patch in bad:
             with self.subTest(patch=patch), self.assertRaises(ValueError):
                 acceptance.run(self.config(**patch))

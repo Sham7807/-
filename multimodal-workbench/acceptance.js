@@ -8,7 +8,7 @@ let serviceState='connecting',kvvRevision='';
 const suiteRuns=new Map(),historyNotified=new Set();
 let displayedRunId='',pollGeneration=0,restoring=false;
 const statuses={passed:'通过',failed:'未通过',skipped:'已跳过',inconclusive:'无法判定',error:'运行错误',cancelled:'已取消',completed:'测试已完成',running:'运行中',not_covered:'未覆盖'};
-const ccItems=['无效 thinking 签名','message_start 唯一性','message_stop 完整收尾','连接及时关闭','流中错误事件','错误状态与格式','usage / 缓存字段','工具参数 JSON 增量'];
+const ccItems=['无效 thinking 签名','message_start 唯一性','message_stop 完整收尾','连接及时关闭','流中错误事件','错误状态与格式','usage / 缓存字段','工具参数 JSON 增量','系统提示词注入与金丝雀泄露','指令层级与越权覆盖','重复行为一致性（蒸馏风险启发式）','非法参数拒绝与错误诊断'];
 const quickItems=['基础请求 · non-thinking','基础请求 · thinking','非法温度 · non-thinking','非法温度 · thinking','Tool Schema · 非流式','Tool Schema · 流式','Dynamic tools','JSON Object 输出','tool_choice required','Prompt Tokens · 基础','Prompt Tokens · 工具'];
 const fullItems=['参数约束 · 全量','Tool JSON Schema · 全量','K3 特性契约 · 全量','Prompt Token · 文本与视觉'];
 function message(text,error=false){el('acceptanceMessage').hidden=!text;el('acceptanceMessage').textContent=text;el('acceptanceMessage').className='notice'+(error?' error':'');}
@@ -25,7 +25,7 @@ function updateServiceBadge(){
   badge.textContent='本地验收服务未连接';badge.title='请检查本地验收服务是否运行，恢复服务后刷新页面重新连接。';
  }
 }
-function config(){return {suite:selected==='ccmax'?'ccmax':el('acceptanceScope').value,base:el('acceptanceBase').value.trim(),key:el('acceptanceKey').value.trim(),model:el('acceptanceModel').value.trim(),timeout:Number(el('acceptanceTimeout').value),signature_samples:Number(el('acceptanceSignature').value),sse_samples:Number(el('acceptanceSse').value),concurrency:2,auth:el('acceptanceAuth').value,think_mode:el('acceptanceThinkMode').value,thinking:el('acceptanceThinkMode').value!=='none'};}
+function config(){return {suite:selected==='ccmax'?'ccmax':el('acceptanceScope').value,base:el('acceptanceBase').value.trim(),key:el('acceptanceKey').value.trim(),model:el('acceptanceModel').value.trim(),timeout:Number(el('acceptanceTimeout').value),signature_samples:Number(el('acceptanceSignature').value),sse_samples:Number(el('acceptanceSse').value),concurrency:2,auth:el('acceptanceAuth').value,think_mode:el('acceptanceThinkMode').value,thinking:el('acceptanceThinkMode').value!=='none',advanced:selected==='ccmax'};}
 function updatePlan(){
  const cc=selected==='ccmax',full=el('acceptanceScope').value==='kvvfull';
  el('acceptanceTitle').textContent=cc?'CCMax渠道验收':'Kimi Vendor Verifier';
@@ -33,11 +33,11 @@ function updatePlan(){
  el('acceptanceFootnote').textContent=cc?'CCMax 使用独立的 Anthropic Messages 检测器，结果按请求样本与检查类别分别汇总。本地服务保存脱敏证据。':'本地服务自动调用已集成的官方 KVV。预检是用例抽样，全套是四套 API 验证，不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 能力评测。';
  el('acceptanceKimiFields').hidden=cc;el('acceptanceCcFields').hidden=!cc;
  const items=cc?ccItems:full?fullItems:quickItems;
- const root=el('acceptancePlan');root.replaceChildren(make('h3','',cc?'8 类渠道验收检查':full?'全套 API verifier':'11 项代表性预检'));
+ const root=el('acceptancePlan');root.replaceChildren(make('h3','',cc?'12 类渠道验收检查（含 4 项安全与一致性探针）':full?'全套 API verifier':'11 项代表性预检'));
  const list=make('ol','acceptance-plan-list');items.forEach((text,i)=>{const item=make('li');item.append(make('i','',String(i+1).padStart(2,'0')),make('span','',text));list.append(item);});root.append(list);
- const note=cc?'只有正常 2xx 完成响应才算签名被接受。401、429、网络错误记为无法判定；SSE error 记录为本次调用失败。':full?'当前版本收集 611 个 pytest 项，含官方跳过项和本地检查。逐项执行，不自动重试失败请求；用例内可能有多次 API 请求。':'复用现有 11 项预检清单；这是官方用例的抽样组合，不是 Kimi 官方认证。非法参数遇到鉴权或网络错误不会记为通过。';
+ const note=cc?'包含协议、流式、工具、错误映射，以及系统提示词金丝雀、指令层级、固定令牌重复性和非法参数探针。安全探针只记录本轮观察，不证明模型身份或蒸馏事实；401、429、网络错误记为无法判定。':full?'当前版本收集 611 个 pytest 项，含官方跳过项和本地检查。逐项执行，不自动重试失败请求；用例内可能有多次 API 请求。':'复用现有 11 项预检清单；这是官方用例的抽样组合，不是 Kimi 官方认证。非法参数遇到鉴权或网络错误不会记为通过。';
  root.append(make('p','acceptance-plan-note',note));
- el('acceptanceRequestHint').textContent=cc?`计划 ${Number(el('acceptanceSignature').value)+Number(el('acceptanceSse').value)+2} 次请求（含 1 次强制工具调用、1 次错误样例），按渠道计费。`:full?'全量执行数百次请求，按渠道计费；完成时间取决于模型速度。':'计划 11 个测试项，不自动重试；请求按渠道计费。';
+ el('acceptanceRequestHint').textContent=cc?`计划 ${Number(el('acceptanceSignature').value)+Number(el('acceptanceSse').value)+7} 次请求（含 1 次强制工具、1 次非法模型，以及 5 次安全/一致性/参数探针），按渠道计费。`:full?'全量执行数百次请求，按渠道计费；完成时间取决于模型速度。':'计划 11 个测试项，不自动重试；请求按渠道计费。';
 }
 async function api(path,options={}){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path==='/api/models'?30000:12000);
@@ -106,6 +106,9 @@ function renderCase(item){
  return row;
 }
 function duration(seconds){return seconds>=60?`${Math.floor(seconds/60)} 分 ${Math.floor(seconds%60)} 秒`:`${Math.floor(seconds)} 秒`;}
+function filenamePart(value){return String(value||'未命名模型').trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'-').replace(/\s+/g,' ').slice(0,80)||'未命名模型';}
+function reportStamp(data){const raw=Number(data?.finished_at||data?.started_at||Date.now()/1000);const date=new Date((raw<1e12?raw*1000:raw));const pad=value=>String(value).padStart(2,'0');return `${date.getFullYear()}${pad(date.getMonth()+1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;}
+function reportDownloadName(data,format){const result=data?.result||{},model=result.configuration?.model||data?.model||'未命名模型',base=`测试报告-${filenamePart(model)}-${reportStamp(data)}`;return format==='evidence.zip'?base+'-证据.zip':base+'.'+format.split('.').pop();}
 function render(data,id){
  displayedRunId=id;el('acceptanceProgress').hidden=false;
  const done=data.completed||0,total=data.total||0,pct=total?Math.min(100,done/total*100):0;
@@ -173,7 +176,7 @@ el('acceptanceSampling').addEventListener('change',()=>{const mode=el('acceptanc
 for(const id of ['acceptanceSignature','acceptanceSse'])el(id).addEventListener('input',()=>{el('acceptanceSampling').value='custom';updatePlan();});
 el('acceptanceRun').addEventListener('click',start);
 el('acceptanceStop').addEventListener('click',async()=>{if(!runId)return;el('acceptanceStop').disabled=true;try{await api('/api/runs/'+runId+'/cancel',{method:'POST',body:'{}'});message('已请求取消，正在关闭后台请求并整理已完成结果。');}catch(e){message(e.message,true);el('acceptanceStop').disabled=false;}});
-for(const button of document.querySelectorAll('[data-acceptance-download]'))button.addEventListener('click',async()=>{const saved=suiteRuns.get(selected),id=displayedRunId;if(!saved||saved.id!==id||!saved.data.result)return;button.disabled=true;try{const r=await api('/api/runs/'+id+'/'+button.dataset.acceptanceDownload);const blob=await r.blob(),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='acceptance-'+button.dataset.acceptanceDownload;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(e){message(e.message,true);}finally{syncDownloads();}});
+for(const button of document.querySelectorAll('[data-acceptance-download]'))button.addEventListener('click',async()=>{const saved=suiteRuns.get(selected),id=displayedRunId;if(!saved||saved.id!==id||!saved.data.result)return;button.disabled=true;try{const r=await api('/api/runs/'+id+'/'+button.dataset.acceptanceDownload);const blob=await r.blob(),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download=reportDownloadName(saved.data,button.dataset.acceptanceDownload);a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(e){message(e.message,true);}finally{syncDownloads();}});
 async function loadModels(){
  if(active||!serviceReady)return;
  const c=config();if(!c.base||!c.key){message('请先填写渠道地址和 API Key。',true);return;}

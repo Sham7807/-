@@ -26,6 +26,20 @@ def kvv(cases, requests=None, **extra):
 
 
 class ReportContentTests(unittest.TestCase):
+    def test_cc_advanced_checks_have_professional_scope_and_limitations(self):
+        source = {"suite": "ccmax_acceptance", "configuration": {"advanced": True},
+                  "summary": {"total": 1, "completed": 1},
+                  "checks": [{"id": "prompt_injection", "status": "failed"},
+                             {"id": "instruction_hierarchy", "status": "passed"},
+                             {"id": "behavioral_consistency", "status": "failed"},
+                             {"id": "parameter_validation", "status": "passed"}],
+                  "samples": []}
+        report = content.build_report_data(source)
+        rows = {row["id"]: row for row in report["checks"]}
+        self.assertIn("金丝雀", rows["prompt_injection"]["method"])
+        self.assertIn("蒸馏", rows["behavioral_consistency"]["meaning"])
+        self.assertIn("HTTP 400", rows["parameter_validation"]["expected"])
+
     def test_cc_denominators_preserve_uncovered_and_inconclusive_records(self):
         samples = []
         for i, status in enumerate(("passed", "failed", "inconclusive", "not_covered"), 1):

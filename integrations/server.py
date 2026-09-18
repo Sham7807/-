@@ -13,7 +13,7 @@ import time
 import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, quote
 import kvv_runner
 from acceptance_results import decorate
 from auth_history import Store, COOKIE_NAME, MAX_BODY
@@ -61,6 +61,9 @@ def validate(data):
     c['auth'] = data.get('auth','anthropic')
     if c['auth'] not in ('anthropic','bearer'): raise ValueError('CCmax 鉴权方式无效')
     c['thinking'] = bool(data.get('thinking',True))
+    advanced = data.get('advanced', True if c['suite'] == 'ccmax' else False)
+    if not isinstance(advanced, bool): raise ValueError('高级 CCMax 探针开关必须为布尔值')
+    c['advanced'] = advanced
     return c
 
 def run_job(job,c):
@@ -112,6 +115,19 @@ def run_job(job,c):
 def snapshot(job):
     return {k:v for k,v in job.items() if k not in ('cancel','result')} | {'elapsed': round((job.get('finished_at') or time.time())-job['started_at'],1), 'result':job.get('result')}
 
+def report_download_name(result, kind='html'):
+    result = result if isinstance(result, dict) else {}
+    configuration = result.get('configuration') if isinstance(result.get('configuration'), dict) else {}
+    model = str(configuration.get('model') or result.get('model') or '未命名模型').strip()
+    model = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '-', model)
+    model = re.sub(r'\s+', ' ', model)[:80].strip() or '未命名模型'
+    raw = result.get('finished_at') or result.get('started_at') or time.time()
+    try: stamp = time.strftime('%Y%m%d-%H%M%S', time.localtime(float(raw) if float(raw) < 1e12 else float(raw) / 1000))
+    except (TypeError, ValueError, OverflowError): stamp = time.strftime('%Y%m%d-%H%M%S')
+    base = '测试报告-%s-%s' % (model, stamp)
+    if kind == 'evidence.zip': return base + '-证据.zip'
+    return base + '.' + str(kind).rsplit('.', 1)[-1]
+
 def report_html(result, directory=None):
     from report_renderer import render_report
     return render_report(result, directory)
@@ -150,7 +166,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)))
         self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer')
         self.send_header('X-Frame-Options','SAMEORIGIN')
-        if filename:self.send_header('Content-Disposition',f'attachment; filename="{filename}"')
+        if filename:
+            fallback = re.sub(r'[^A-Za-z0-9._-]+', '_', str(filename)) or 'download'
+            self.send_header('Content-Disposition', "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (fallback, quote(str(filename), safe='')))
         self.end_headers();self.wfile.write(data)
     def send_json(self,status,data): self.send_bytes(status,json.dumps(data,ensure_ascii=False).encode(),'application/json; charset=utf-8')
     def do_GET(self):
@@ -215,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 5 and parts[4] == 'report.json':
                 record = AUTH_STORE.detail(identity)
                 if not record: return self.send_json(404, {'error':'历史记录不存在'})
-                return self.send_bytes(200,json.dumps(record,ensure_ascii=False,indent=2).encode(),'application/json','history-report.json')
+                return self.send_bytes(200,json.dumps(record,ensure_ascii=False,indent=2).encode(),'application/json',report_download_name(record, 'json'))
             return self.send_json(404, {'error':'历史资源不存在'})
         if path.startswith('/api/runs/'):
             if not self.guard(auth=True):return
@@ -226,15 +244,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200,data)
             result=job.get('result')
             if not result:return self.send_json(409,{'error':'任务尚未完成'})
-            if parts[4]=='report.html':return self.send_bytes(200,report_html(result,REPORTS/job['id']),'text/html; charset=utf-8','acceptance-report.html')
-            if parts[4]=='report.json':return self.send_bytes(200,json.dumps(result,ensure_ascii=False,indent=2).encode(),'application/json','acceptance-report.json')
+            if parts[4]=='report.html':return self.send_bytes(200,report_html(result,REPORTS/job['id']),'text/html; charset=utf-8',report_download_name(result, 'html'))
+            if parts[4]=='report.json':return self.send_bytes(200,json.dumps(result,ensure_ascii=False,indent=2).encode(),'application/json',report_download_name(result, 'json'))
             if parts[4]=='evidence.zip':
                 data=io.BytesIO()
                 with zipfile.ZipFile(data,'w',zipfile.ZIP_DEFLATED) as archive:
                     for f in (REPORTS/job['id']).iterdir():
                         if f.is_file() and f.name!='report.html':archive.writestr(f.name,f.read_bytes())
                     archive.writestr('report.html',report_html(result,REPORTS/job['id']))
-                return self.send_bytes(200,data.getvalue(),'application/zip','acceptance-evidence.zip')
+                return self.send_bytes(200,data.getvalue(),'application/zip',report_download_name(result, 'evidence.zip'))
             return self.send_json(404,{'error':'产物不存在'})
         if path=='/' or path=='/index.html': target=WEB/'index.html'
         elif re.fullmatch(r'/[a-zA-Z0-9_-]+\.(js|css|html)',path): target=WEB/path[1:]

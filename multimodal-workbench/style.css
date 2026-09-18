@@ -286,6 +286,7 @@ textarea { resize: vertical; line-height: 1.8; }
 .alias-override input { width: 13px; height: 13px; flex: 0 0 auto; margin: 2px 0 0; padding: 0; accent-color: var(--teal); }
 .protocol-note { border-left: 2px solid #b2c59d; padding: 5px 10px; background: #f4f7ef; color: #8b9a79; font-size: 10px; margin: -2px 0 15px; line-height: 1.8; }
 .diagnostic { border: 1px solid #ecdcb8; border-radius: 8px; padding: 12px; background: #fffbf1; margin: 10px 0; color: #7e692f; font-size: 11px; }
+.diagnostic-title { color: #715b25; font-weight: 600; }
 .diagnostic p { margin: 0 0 8px; }
 .model-fetch-actions { display: flex; align-items: center; gap: 10px; }
 .model-picker { position: relative; min-width: 0; }

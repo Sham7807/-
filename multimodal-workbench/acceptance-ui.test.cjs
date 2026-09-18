@@ -70,7 +70,7 @@ async function fixture(browser, options = {}) {
       if (url.pathname === '/api/runs' && req.method() === 'POST') {
         const body = JSON.parse(req.postData());state.posts.push(body);
         if (state.job) previousJobs.set(state.job.id, state.job);
-        state.job = running(body.suite, body.suite === 'ccmax' ? body.signature_samples + body.sse_samples + 2 : undefined);
+        state.job = running(body.suite, body.suite === 'ccmax' ? body.signature_samples + body.sse_samples + 7 : undefined);
         if (options.uniqueRunIds) state.job.id = 'fixture-run-' + state.posts.length;
         return send({ id: state.job.id });
       }
@@ -144,7 +144,7 @@ async function download(page, format, bytes) {
   const pending = page.waitForEvent('download');
   await page.locator(`[data-acceptance-download="${format}"]`).click();
   const value = await pending;
-  assert.equal(value.suggestedFilename(), 'acceptance-' + format);
+  assert.match(value.suggestedFilename(), /^测试报告-[^/\\:]+-\d{8}-\d{6}(?:-证据)?\.(?:html|json|zip)$/);
   const file = path.join(output, value.suggestedFilename());await value.saveAs(file);
   assert.deepEqual(await fs.readFile(file), Buffer.from(bytes));
 }
@@ -191,20 +191,20 @@ async function download(page, format, bytes) {
         assert.match(await page.locator('#acceptanceRequestHint').innerText(), /数百次/);
         await screenshot(page, 'desktop-kvv-full.png');
         await page.locator('[data-suite="ccmax"]').click();
-        assert.equal(await page.locator('#acceptancePlan li').count(), 8);
+        assert.equal(await page.locator('#acceptancePlan li').count(), 12);
         assert.equal(await page.locator('#acceptanceKimiFields').isVisible(), false);
         assert.equal(await page.locator('#acceptanceCcFields').isVisible(), true);
         assert.equal(await page.locator('#acceptanceAuth').inputValue(), 'anthropic');
         await page.locator('#acceptanceAuth').selectOption('bearer');
         assert.equal(await page.locator('#acceptanceAuth').inputValue(), 'bearer');
-        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 6 次/);
+        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 11 次/);
         await page.locator('#acceptanceSampling').selectOption('batch');
         assert.equal(await page.locator('#acceptanceSignature').inputValue(), '5');
         assert.equal(await page.locator('#acceptanceSse').inputValue(), '50');
-        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 57 次/);
+        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 62 次/);
         await page.locator('#acceptanceSignature').fill('2');await page.locator('#acceptanceSse').fill('7');
         assert.equal(await page.locator('#acceptanceSampling').inputValue(), 'custom');
-        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 11 次/);
+        assert.match(await page.locator('#acceptanceRequestHint').innerText(), /计划 16 次/);
         assert.equal(state.posts.length, 0, 'changing plans does not start billable work');
         await screenshot(page, 'desktop-ccmax-plan.png');
         await page.setViewportSize({ width: 390, height: 844 });
@@ -220,7 +220,7 @@ async function download(page, format, bytes) {
         await page.locator('#acceptanceAuth').selectOption('bearer');
         await page.locator('#acceptanceSignature').fill('2');await page.locator('#acceptanceSse').fill('7');
         await page.locator('#acceptanceRun').click();
-        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 11');
+        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 16');
         assert.equal(state.posts.length, 1);assert.equal(state.posts[0].suite, 'ccmax');
         assert.equal(state.posts[0].auth, 'bearer');
         assert.equal(state.posts[0].signature_samples, 2);assert.equal(state.posts[0].sse_samples, 7);
@@ -234,9 +234,9 @@ async function download(page, format, bytes) {
         assert.equal(await page.locator('[data-suite="ccmax"]').isEnabled(), true, 'active suite remains reachable after opening general tests');
         await page.locator('[data-suite="ccmax"]').click();
         assert.equal(await page.locator('#acceptancePanel').isVisible(), true);
-        state.job = { ...state.job, completed: 4, elapsed: 20, request_count: 5, events: [{ type: 'progress', suite: 'ccmax_acceptance', phase: 'sample_complete', sample_id: 'sse-1', status: 'failed', completed: 4, total: 11, active: 1, message: 'sse-1：failed' }] };
-        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '4 / 11');
-        assert.match(await page.locator('#acceptanceEta').innerText(), /估计剩余约 35 秒/);
+        state.job = { ...state.job, completed: 4, elapsed: 20, request_count: 5, events: [{ type: 'progress', suite: 'ccmax_acceptance', phase: 'sample_complete', sample_id: 'sse-1', status: 'failed', completed: 4, total: 16, active: 1, message: 'sse-1：failed' }] };
+        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '4 / 16');
+        assert.match(await page.locator('#acceptanceEta').innerText(), /估计剩余约 1 分 0 秒/);
         assert.equal(await page.locator('.acceptance-case.failed').count(), 1);
         assert.match(await page.locator('#acceptanceSummary').innerText(), /实际 API 请求 5 次/);
         await screenshot(page, 'desktop-ccmax-progress.png');
@@ -337,7 +337,7 @@ async function download(page, format, bytes) {
         await page.setViewportSize({ width: 390, height: 844 });await picker.getByRole('button', { name: '选择渠道模型' }).click();await noOverflow(page);
         await screenshot(page, 'mobile-acceptance-model-picker.png');
         await page.locator('#acceptanceModel').press('Escape');
-        await page.locator('#acceptanceRun').click();await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 6');
+        await page.locator('#acceptanceRun').click();await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 11');
         assert.equal(state.posts.length, 1);assert.equal(state.posts[0].model, 'unlisted/custom-model');
         assert.equal(await picker.getByRole('button', { name: '选择渠道模型' }).isDisabled(), true);
         assert.equal(await page.locator('#acceptanceModels').isDisabled(), true);
@@ -464,9 +464,9 @@ async function download(page, format, bytes) {
     }
     passed.push('incremental KVV call/teardown and CC sample events deduplicate by ID with latest status/evidence');
     for (const plan of [
-      { signature: 5, sse: 50, mode: 'batch', total: 57 },
-      { signature: 1, sse: 3, mode: 'quick', total: 6 },
-      { signature: 2, sse: 7, mode: 'custom', total: 11 },
+      { signature: 5, sse: 50, mode: 'batch', total: 62 },
+      { signature: 1, sse: 3, mode: 'quick', total: 11 },
+      { signature: 2, sse: 7, mode: 'custom', total: 16 },
     ]) {
       const configuration = { signature_samples: plan.signature, sse_samples: plan.sse, timeout: 85, auth: 'bearer', think_mode: 'opensource', key: 'never-restore-this-fixture-key', unrelated: 'ignored' };
       const f = await fixture(browser, { latest: 'ccmax', total: plan.total, configuration });const { page, state } = f;
@@ -594,10 +594,10 @@ async function download(page, format, bytes) {
       const f = await fixture(browser, { uniqueRunIds: true });const { page, state } = f;
       try {
         await suite(page, 'ccmax');await fill(page, 'fixture-ccmax');await page.locator('#acceptanceRun').click();
-        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 6');
+        await page.waitForFunction(() => document.getElementById('acceptanceCount').textContent === '0 / 11');
         const ccId = state.job.id;
         const ccResult = result('ccmax', 'completed');ccResult.log = 'CCMax cached evidence';ccResult.verdict.label = 'CCMax 专属报告';
-        state.job = { ...state.job, status: 'completed', completed: 6, result: ccResult };
+        state.job = { ...state.job, status: 'completed', completed: 11, result: ccResult };
         await page.waitForFunction(() => document.getElementById('acceptanceVerdict').textContent.includes('CCMax 专属报告'));
         await suite(page, 'kimi');assert.equal(await page.locator('#acceptanceProgress').isVisible(), false);
         assert.equal(await page.locator('[data-acceptance-download="report.json"]').isDisabled(), true);
@@ -616,7 +616,7 @@ async function download(page, format, bytes) {
         await page.waitForFunction(() => !document.querySelector('[data-suite="ccmax"]').disabled);
         await suite(page, 'ccmax');
         assert.match(await page.locator('#acceptanceStage').innerText(), /^CCMax.*已完成/);
-        assert.equal(await page.locator('#acceptanceCount').innerText(), '6 / 6');
+        assert.equal(await page.locator('#acceptanceCount').innerText(), '11 / 11');
         assert.match(await page.locator('#acceptanceVerdict').innerText(), /CCMax 专属报告/);
         assert.equal(await page.locator('#acceptanceLog').textContent(), 'CCMax cached evidence');
         await download(page, 'report.json', reportJson);

@@ -57,6 +57,21 @@
   .keyrow>input{flex:1;border:0;background:transparent;box-shadow:none!important}
   .keyrow label{display:flex;align-items:center;gap:4px;margin:0 10px 0 3px;font-size:10px;color:#8a987f;white-space:nowrap;cursor:pointer;user-select:none}
   .keyrow label input{width:12px;height:12px;padding:0;accent-color:#547843}
+  .model-row{display:flex;align-items:stretch;gap:7px;min-width:0}
+  .model-row>input{flex:1;min-width:0}
+  .model-load{flex:0 0 auto;border:1px solid #b7cbb0;border-radius:7px;background:#f2f7ee;color:#4e7045;padding:0 10px;font-size:10px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s}
+  .model-load:hover:not(:disabled){background:#e5f0df;border-color:#8eaf82;color:#315e3e}
+  .model-load:disabled{opacity:.5;cursor:not-allowed}
+  .model-picker{display:none;margin-top:7px;border:1px solid var(--border2);border-radius:8px;background:#fff;overflow:hidden;box-shadow:0 8px 22px rgba(46,80,56,.08)}
+  .model-picker.open{display:block}
+  .model-picker-search{width:100%;border:0!important;border-bottom:1px solid var(--border)!important;border-radius:0!important;background:#fbfcf9!important;padding:8px 10px!important;font-size:10px!important;box-shadow:none!important}
+  .model-picker-status{padding:7px 10px 5px;color:#8c9b87;font-size:9px;line-height:1.5}
+  .model-list{max-height:190px;overflow-y:auto;padding:0 5px 5px;scrollbar-width:thin;scrollbar-color:#cfdcc8 transparent}
+  .model-option{display:flex;width:100%;align-items:center;gap:7px;border:0;border-radius:6px;background:transparent;color:var(--text);padding:8px 7px;text-align:left;font-size:10px;cursor:pointer;overflow-wrap:anywhere}
+  .model-option:hover,.model-option:focus-visible{background:#edf5e9;outline:none}
+  .model-option::before{content:'◆';color:#8aa77b;font-size:7px;flex:0 0 auto}
+  .model-empty{padding:8px 10px;color:#9aa494;font-size:10px}
+  @media(max-width:700px){.model-load{padding:0 9px}.model-list{max-height:220px}}
   .general-output{padding:26px;background:var(--soft);min-width:0}
   .output-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
   .output-heading h2{font-size:15px;font-weight:550}
@@ -136,8 +151,14 @@
       <div class="field"><label for="inKey">API Key <span>仅用于本次会话</span></label>
         <div class="keyrow"><input id="inKey" type="password" placeholder="sk-…" autocomplete="off">
           <label><input type="checkbox" onclick="$('inKey').type=this.checked?'text':'password'" aria-label="显示 API Key">显示</label></div></div>
-      <div class="field"><label for="inModel">渠道模型 ID</label>
-        <input id="inModel" placeholder="填写渠道实际使用的模型 ID" autocomplete="off"></div>
+      <div class="field"><label for="inModel">渠道模型 ID <span>可获取后直接选择，也可手动填写</span></label>
+        <div class="model-row"><input id="inModel" placeholder="填写渠道实际使用的模型 ID" autocomplete="off"><button id="loadGeneralModels" class="model-load" type="button">获取模型</button></div>
+        <div id="generalModelPicker" class="model-picker" role="region" aria-label="渠道模型列表">
+          <input id="generalModelSearch" class="model-picker-search" type="search" placeholder="搜索模型名称" autocomplete="off" aria-label="搜索模型名称">
+          <div id="generalModelStatus" class="model-picker-status" role="status">填写渠道地址和 API Key 后获取</div>
+          <div id="generalModelList" class="model-list" role="listbox" aria-label="可选择的模型"></div>
+        </div>
+      </div>
       <div class="settings-row">
         <div class="field"><label for="inTimeout">单次超时（秒）</label><input id="inTimeout" type="number" min="10" value="180"></div>
         <div class="field"><label for="inConc">并发路数</label><select id="inConc"><option>3</option><option selected>5</option><option>10</option></select></div>
@@ -261,6 +282,65 @@ function cfg(){const c=RUN_CONFIG||readCfg();return{...c,model:MODEL_OVERRIDE||c
 const resultCfg=()=>S.config||cfg();
 const CHAT=()=>cfg().base+'/v1/chat/completions';
 const MODELS=()=>cfg().base+'/v1/models';
+
+/* 模型列表在通用检测开始前即可获取；运行中的请求不会被刷新列表打断。 */
+let generalModelCatalog=[],generalModelFetchEpoch=0,generalModelController=null;
+function generalModelData(data){
+  const rows=Array.isArray(data?.models)?data.models:Array.isArray(data?.data)?data.data:[];
+  const ids=[];const seen=new Set();
+  for(const row of rows){
+    const id=typeof row==='string'?row:row&&typeof row==='object'?(row.id??row.name??''):'';
+    const value=String(id||'').trim();
+    if(value&&!seen.has(value)){seen.add(value);ids.push(value);}
+  }
+  return ids;
+}
+function renderGeneralModels(query=''){
+  const list=$('generalModelList'),needle=String(query||'').trim().toLowerCase();
+  list.replaceChildren();
+  const rows=generalModelCatalog.filter(id=>!needle||id.toLowerCase().includes(needle));
+  if(!generalModelCatalog.length){$('generalModelStatus').textContent='暂未获取模型列表；也可以手动填写模型 ID。';return;}
+  $('generalModelStatus').textContent=needle?`匹配 ${rows.length} / ${generalModelCatalog.length} 个模型`:`已获取 ${generalModelCatalog.length} 个模型`;
+  if(!rows.length){const empty=document.createElement('div');empty.className='model-empty';empty.textContent='没有匹配的模型，可更换关键词或手动填写。';list.appendChild(empty);return;}
+  for(const id of rows){
+    const button=document.createElement('button');button.className='model-option';button.textContent=id;button.type='button';button.dataset.model=id;button.setAttribute('role','option');
+    button.addEventListener('click',()=>{ $('inModel').value=id;storage.set('mct_inModel',id); $('generalModelSearch').value=''; $('generalModelPicker').classList.remove('open'); $('generalModelStatus').textContent=`已选择：${id}`; });
+    list.appendChild(button);
+  }
+}
+function closeGeneralModelPicker(){
+  $('generalModelPicker').classList.remove('open');
+  $('generalModelSearch').value='';
+  if(generalModelCatalog.length)$('generalModelStatus').textContent=`已获取 ${generalModelCatalog.length} 个模型；点击获取模型可刷新。`;
+}
+async function loadGeneralModels(){
+  if(RUNNING)return;
+  const c=readCfg();
+  if(!c.base||!c.key){$('generalModelStatus').textContent='请先填写渠道地址和 API Key。';$('generalModelPicker').classList.add('open');return;}
+  try{const target=new URL(c.base);if(!/^https?:$/.test(target.protocol))throw new Error();}catch{$('generalModelStatus').textContent='渠道地址无效，请填写 HTTP / HTTPS 地址。';$('generalModelPicker').classList.add('open');return;}
+  const epoch=++generalModelFetchEpoch,button=$('loadGeneralModels');
+  if(generalModelController)generalModelController.abort();
+  const controller=new AbortController();generalModelController=controller;
+  const timer=setTimeout(()=>controller.abort(),30000);
+  button.disabled=true;button.textContent='获取中…';$('generalModelPicker').classList.add('open');$('generalModelStatus').textContent='正在获取模型列表（最多 30 秒）…';$('generalModelList').replaceChildren();
+  try{
+    const response=await fetch(MODELS(),{cache:'no-store',signal:controller.signal,headers:{Authorization:'Bearer '+c.key}});
+    let body=null;try{body=await response.json();}catch{}
+    if(!response.ok){const detail=body?.error?.message||body?.error||body?.message||`HTTP ${response.status}`;throw new Error(String(detail));}
+    const ids=generalModelData(body);
+    if(epoch!==generalModelFetchEpoch)return;
+    generalModelCatalog=ids;renderGeneralModels();
+    if(!ids.length)$('generalModelStatus').textContent='接口返回 0 个可识别模型；仍可手动填写模型 ID。';
+  }catch(error){
+    if(epoch!==generalModelFetchEpoch)return;
+    const detail=error?.name==='AbortError'?'请求超时或已取消':error?.message||'获取失败';
+    $('generalModelStatus').textContent=`获取失败：${detail}。可重试或手动填写模型 ID。`;
+    $('generalModelList').replaceChildren();
+  }finally{
+    clearTimeout(timer);
+    if(epoch===generalModelFetchEpoch){button.disabled=false;button.textContent=generalModelCatalog.length?'刷新模型':'获取模型';generalModelController=null;}
+  }
+}
 
 /* ---- 技术栈指纹 ---- */
 const FP_KEYS={
@@ -951,8 +1031,10 @@ ${intelRows?`<div class="panel"><h2>🕵️ 技术栈指纹 & 情报</h2>${intel
   const blob=new Blob([html],{type:'text/html;charset=utf-8'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  const stamp=new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
-  a.download=`测试报告_${c.model||'batch'}_${stamp}.html`;
+  const now=new Date(),pad=v=>String(v).padStart(2,'0');
+  const stamp=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const modelPart=String(c.model||'batch').trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'-').replace(/\s+/g,' ').slice(0,80)||'未命名模型';
+  a.download=`测试报告-${modelPart}-${stamp}.html`;
   a.click();URL.revokeObjectURL(a.href);
   log('报告已下载: '+a.download,'ok');
 }
@@ -1146,6 +1228,17 @@ document.querySelectorAll('.mode-card').forEach(el=>{
 ['inBase','inModel','inTimeout','inConc','inBatch'].forEach(id=>{
   const v=storage.get('mct_'+id);if(v)$(id).value=v;
   $(id).addEventListener('input',()=>storage.set('mct_'+id,$(id).value));
+});
+$('loadGeneralModels').addEventListener('click',loadGeneralModels);
+$('generalModelSearch').addEventListener('input',event=>renderGeneralModels(event.target.value));
+for(const id of ['inBase','inKey'])$(id).addEventListener('input',()=>{
+  generalModelFetchEpoch++;
+  if(generalModelController)generalModelController.abort();
+  generalModelCatalog=[];
+  $('generalModelList').replaceChildren();
+  $('generalModelStatus').textContent='渠道配置已变化，请重新获取模型列表。';
+  $('loadGeneralModels').disabled=false;
+  $('loadGeneralModels').textContent='获取模型';
 });
 initCards();
 /* Keep the embedded page in the workbench's normal scroll flow. */

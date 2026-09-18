@@ -129,7 +129,7 @@
   }
   async function download(record, format, button) {
     button.disabled = true; $('historyDetailBody').querySelectorAll('.history-detail-error').forEach(node => node.remove());
-    try { const path = record.run_id ? '/api/runs/' + encodeURIComponent(record.run_id) + '/' + format : '/api/history/' + encodeURIComponent(record.id) + '/report.json'; const response = await request(path), blob = await response.blob(), url = URL.createObjectURL(blob), a = make('a'); a.href = url; a.download = '测试记录-' + record.id + '-' + format; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000); }
+    try { const path = record.run_id ? '/api/runs/' + encodeURIComponent(record.run_id) + '/' + format : '/api/history/' + encodeURIComponent(record.id) + '/report.json'; const response = await request(path), blob = await response.blob(), url = URL.createObjectURL(blob), a = make('a'); a.href = url; const raw = Number(record.finished_at || record.created_at || Date.now() / 1000), date = new Date((raw < 1e12 ? raw * 1000 : raw)), pad = value => String(value).padStart(2, '0'), stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`, model = String(record.model || record.title || '未命名模型').trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').slice(0, 80) || '未命名模型', suffix = format === 'evidence.zip' ? '-证据.zip' : '.' + format.split('.').pop(); a.download = `测试报告-${model}-${stamp}${suffix}`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000); }
     catch (error) { if (currentRecord?.id === record.id) $('historyDetailBody').append(make('p', error.message, 'history-detail-error')); }
     finally { button.disabled = false; }
   }

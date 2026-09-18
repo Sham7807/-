@@ -1,26 +1,41 @@
-# 小小宇宙无敌 · 模型渠道测试台
+# 小小宇宙无敌 · 多模态模型渠道测试台
 
-在一个网页中测试文本、图像、视频和音频渠道，预览生成结果，并执行独立的 CCMax 渠道验收或官方 Kimi Vendor Verifier 验证。
+面向中转站和模型渠道接入的验收工作台。它把文本、图像、视频、音频请求放到同一个界面里，帮助你在接入新渠道时快速确认：请求是否发出、响应是否符合协议、媒体是否可以展示，以及失败时应该从哪里排查。
 
-基础网页可直接打开。CCMax / Kimi 专项需要本地 Python 服务，目前支持 macOS 和 Linux。调用真实渠道会按渠道规则计费；测试结果以实际响应为准，不代表官方认证或模型身份鉴定。
+工作台支持浏览器直连的基础测试，也支持由本地 Python 服务执行的通用深度检测、CCMax 渠道验收和 Kimi Vendor Verifier（KVV）。它是渠道兼容性与传输质量工具，不是模型身份认证、生成质量评分或“覆盖所有私有接口”的承诺；每项结论都以实际请求和报告中的证据为准。
 
-## 直接使用基础测试
+## 你可以用它做什么
 
-下载或克隆项目后，打开根目录的 **中转站测试工具-多模态版.html**。
+| 模态 | 主要能力 | 已适配协议 / 工作流 |
+| --- | --- | --- |
+| 文本 | 单次对话、流式响应、通用深度检测、模型列表获取 | OpenAI Chat Completions / Responses、Anthropic Messages、Gemini GenerateContent |
+| 图像 | 文生图、图生图 / 编辑、多图参考、页面预览、打开与下载 | OpenAI 兼容图片接口、Gemini 图像生成 / 编辑、JSON 参考图协议 |
+| 视频 | 创建任务、实时进度、轮询、继续查询、播放与下载 | 中转站 Videos JSON、OpenAI Videos、豆包 / Seedance 原生任务、自定义 JSON |
+| 音频 | 语音生成、音频对话、转写、翻译、页面播放与下载 | OpenAI Speech、Chat Completions 音频、Gemini TTS、Transcriptions / Translations |
+
+每种模态都提供代表性测试场景。选择场景后提示词会直接填入，可继续编辑；图像任务支持上传本地参考图、逐行填写图片 URL，或使用附加 JSON 自定义 `image`、`model`、`aspect_ratio`、`size` 等字段。
+
+模型 ID 可以手动填写，也可以从渠道的 `/v1/models` 获取并搜索选择。模型名称本身不会改变渠道协议；渠道鉴权、路径、请求体和返回格式不兼容时，需要增加对应适配器。
+
+## 快速开始
+
+### 只做基础测试
+
+无需安装依赖，直接打开根目录的 [中转站测试工具-多模态版.html](中转站测试工具-多模态版.html)。
 
 1. 选择文本、图像、视频或音频。
-2. 填写渠道地址、API Key 与模型 ID，也可以获取渠道模型列表。
-3. 按渠道文档选择接口协议、尺寸等参数。
-4. 选择代表性测试场景，提示词会立即填入，可继续编辑。
-5. 检查请求预览并开始测试，返回的媒体可直接预览、打开或下载。
+2. 填写渠道地址、API Key 和渠道实际使用的模型 ID，或点击获取模型列表。
+3. 按渠道文档选择接口协议、尺寸、分辨率、音色和其他参数。
+4. 选择测试场景，检查请求预览后开始测试。
+5. 查看响应、媒体和实时进度；需要时导出 HTML、JSON 或证据包。
 
-浏览器直连要求渠道允许跨域请求。静态 HTML 或 GitHub Pages 本身不能执行 CCMax / Kimi 的 Python 验收程序。
+浏览器直连要求渠道允许 CORS，并且在 HTTPS 页面中使用 HTTPS 接口。直接打开单文件 HTML 时，基础结果只保存在当前页面，不会写入服务器历史数据库。
 
-## 启动完整工作台
+### 启动完整工作台
 
-需要 Git、Python 3.9+ 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。初始化会从官方 GitHub 获取固定版本 KVV 和约 75 KB 的必要测试素材，再安装 Python 依赖；不会调用模型渠道。
+完整工作台需要 Git、Python 3.9+ 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。首次准备只会获取固定版本的官方 KVV 源码和必要测试素材，不会调用模型渠道。
 
-macOS 用户可双击 **启动验收工作台.command**。也可以在项目根目录执行：
+macOS 用户可以双击 [启动验收工作台.command](启动验收工作台.command)。命令行启动方式如下：
 
 ```bash
 python3 scripts/prepare_kvv.py
@@ -29,71 +44,96 @@ uv pip install --python integrations/.venv/bin/python -e integrations/Kimi-Vendo
 integrations/.venv/bin/python integrations/server.py --open
 ```
 
-打开 [http://127.0.0.1:8877/](http://127.0.0.1:8877/)。服务只监听本机，终端中按 `Ctrl+C` 停止。更换端口可使用 `--port 8878`。
-
-官方源码会放在 `integrations/Kimi-Vendor-Verifier/`，固定版本记录在 [integrations/SOURCE.json](integrations/SOURCE.json)。安装脚本不会自动切换或覆盖已有的不同版本及修改过的素材，也不会下载未使用的 BEAM 大型数据集。
-
-服务器只运行网页中的 CCMax 与 KVV API 验证时，可以将上述完整依赖安装命令替换为：
-
-```bash
-uv pip install --python integrations/.venv/bin/python -r integrations/requirements-api.txt
-```
-
-这组依赖不包含 Inspect / Transformers 等独立 benchmark 环境。远程部署时应使用独立 HTTPS 登录入口，后端继续只监听本机，详见 [服务器部署说明](docs/server-deployment.md)。
-
-检查依赖源码和必要素材是否完整，不联网：
+浏览器访问 `http://127.0.0.1:8877/`。服务只监听本机环回地址，按 `Ctrl+C` 停止；开发时可以使用 `--port 8878` 换端口。检查已安装源码和素材时使用：
 
 ```bash
 python3 scripts/prepare_kvv.py --check
 ```
 
-## 可以测试什么
+只运行网页需要的 CCMax / KVV API 验收依赖时，可以在准备 KVV 后使用精简依赖：
 
-| 类型 | 功能 | 适用接口 |
-| --- | --- | --- |
-| 文本 | 普通对话、流式响应、通用深度检测 | OpenAI Chat Completions / Responses、Anthropic Messages、Gemini |
-| 图像 | 文生图、图生图 / 编辑、多图参考 | OpenAI 兼容图片接口、Gemini 图像接口 |
-| 视频 | 创建任务、轮询进度、播放与下载 | 兼容 Videos、OpenAI Videos、豆包 / Seedance、自定义 JSON |
-| 音频 | 语音生成、音频对话、转写与翻译 | Speech、Chat Completions Audio、Gemini TTS、Transcriptions / Translations |
+```bash
+uv pip install --python integrations/.venv/bin/python -r integrations/requirements-api.txt
+```
 
-模型名称可以手动填写。兼容性取决于渠道的协议、鉴权和模型能力；未实现的原生协议需要单独适配，不能仅靠更改模型名称覆盖所有供应商。
+固定版本、上游地址和素材校验记录在 [integrations/SOURCE.json](integrations/SOURCE.json)。
 
-## CCMax 与 Kimi 专项
+## 深度检测与专项验收
 
-入口：**文本模型 → 深度检测**。
+入口统一在 **文本模型 → 深度检测**。切换专项不会把另一套结果混入当前页面。
 
-**CCMax渠道验收** 使用独立的 Anthropic Messages 检测器，检查无效 thinking 签名、message_start 唯一性、message_stop、连接关闭、流中错误、错误状态与格式、usage / 缓存字段、工具参数 JSON。快速采样默认 6 次请求，批量默认 57 次，可自定义采样数量。Claude 检测不运行 KVV。
+### 通用检测
 
-**Kimi KVV** 由同一本地服务调用 [MoonshotAI/Kimi-Vendor-Verifier](https://github.com/MoonshotAI/Kimi-Vendor-Verifier)：
+各模态基础测试会记录请求状态、耗时、响应结构、输出匹配情况、视频任务进度和媒体加载结果；文本模型下的通用深度检测还会按多个代表性用例检查响应行为。网络失败会区分地址、TLS、CORS、混合内容、HTTP 状态和媒体跨域等常见原因，并把排查建议写入页面和报告。
 
-- **11 项预检**：基础请求、非法参数、工具 Schema、动态工具、JSON 输出、required tool choice 和 prompt token 计数的代表性用例。
-- **全套 API 验证**：`tests/params`、`tests/tool_call_json_schema`、`tests/k3_features`、`tests/prompt_tokens`。当前固定版本收集 611 个 pytest 项，包含跳过项与本地检查，项目数不等于实际 API 请求数。
+### CCMax 渠道验收
 
-全套 API 验证不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 等独立 benchmark。Kimi 普通文本 / 通用检测不依赖 KVV。
+CCMax 指 Claude / Anthropic Messages 兼容渠道，使用独立检测器，不运行 KVV。默认启用 12 类检查：
 
-## 报告与本地数据
+- 伪造 thinking 签名
+- `message_start` 唯一性
+- SSE `message_stop` 收尾完整性
+- `message_stop` 后连接关闭
+- 流中上游错误事件
+- 非法模型错误状态与格式
+- `usage` / 缓存字段结构
+- 工具调用 JSON 增量
+- 系统提示词金丝雀泄露
+- 指令层级与越权覆盖
+- 重复行为一致性（蒸馏风险启发式）
+- 非法参数拒绝与错误诊断
 
-完成或取消专项后，可以下载 HTML 报告、JSON 结果和 ZIP 证据包。本机副本位于 `integrations/reports/<任务ID>/`。
+快速验收默认执行 11 次请求（1 次签名、3 次 SSE、1 次强制工具、1 次非法模型和 5 次高级探针）；批量验收默认执行 62 次请求（5 次签名、50 次 SSE、其余 7 次固定探针）。次数可在页面自定义，实际请求数以报告为准并可能产生渠道费用。
 
-HTML 报告包含测试方法、预期与实际结果、问题影响、排查建议、耗时以及请求 / 响应证据，支持搜索、状态筛选和打印为 PDF。CCMax 与 Kimi 的结果及下载分别关联各自任务。
+高级探针只记录固定输入下的本轮行为，不会索取隐藏系统提示词、用户数据或渠道密钥。提示词泄露、指令覆盖、重复响应差异不能单独证明模型身份、官方来源、蒸馏事实或稳定可利用漏洞；401、429、超时和网络错误会标为“无法判定”。
 
-完整工作台新增独立登录页与「历史记录」入口。基础测试、通用深度检测、CCMax 和 Kimi KVV 的结果保存在服务器 SQLite 数据库中，可按模型、提示词或结果搜索，并按类型和状态筛选。详情保留测试配置、提示词、输出、错误和检测证据，可下载结果；打开历史不会清空正在编辑的测试内容。
+### Kimi Vendor Verifier
 
-只有启用工作台服务后，新测试才会存入数据库；直接双击单文件 HTML 使用时，结果只留在当前页面。过去没有保存到服务器的浏览器测试无法自动恢复；已有 CCMax / KVV 报告会导入历史。API Key 不写入历史记录。浏览器生成的媒体在大小限制内保存到服务器，远程媒体保留链接，需要时点击加载，链接过期后可能无法预览。
+Kimi KVV 由同一个本地服务调用 [MoonshotAI/Kimi-Vendor-Verifier](https://github.com/MoonshotAI/Kimi-Vendor-Verifier) 固定版本 `66092cf444c97356c0e11c5078c67116390615d9`，无需另开 KVV 项目。
 
-远程部署使用 HTTPS、密码哈希和会话 Cookie；登录账号保存在服务器私有配置中，不能提交到仓库。数据库与媒体请一起备份，操作见 [服务器部署说明](docs/server-deployment.md)。
+- **11 项预检**：两种 thinking 基础请求、非法温度、流式 / 非流式 Tool Schema、Dynamic Tools、JSON Object、`tool_choice=required` 和两项 Prompt Tokens 用例。
+- **全套验证**：运行官方 `tests/params`、`tests/tool_call_json_schema`、`tests/k3_features`、`tests/prompt_tokens`。当前固定版本收集 611 个 pytest 项，包含官方跳过项和本地边界检查；用例数量不等于 API 请求数量。
 
-`.gitignore` 已排除本机环境、真实测试报告、日志、截图和原始评估文件。不要把 API Key 写入源码或提交到 Git；分享报告前请检查响应正文是否含业务数据。
+KVV 会分别记录 pytest 结果和传输证据。网络、鉴权或上游传输错误不会被误记为模型能力不合格，也不会把“无法判定”算作通过。全套验证不包含 OCRBench、MMMU、AIME、BEAM 或 DeepSWE 等独立 benchmark。
 
-## 开发与离线验证
+## 报告、历史与隐私
 
-前端是原生 HTML、CSS 和 JavaScript，源码在 `multimodal-workbench/`。修改后重新生成单文件版本：
+专项任务完成或取消后，可以下载 HTML 报告、JSON 结果和 ZIP 证据包。文件名统一为：
+
+```text
+测试报告-测试的模型-YYYYMMDD-HHmmss
+```
+
+模型名中的路径、控制字符和系统保留字符会自动替换，避免出现重复的 `(... 1)` 文件名。HTML 报告包含测试范围、配置、预期与实际结果、问题影响、排查建议、耗时、请求计数和逐项证据，可搜索、筛选并打印为 PDF。
+
+启用完整工作台后，基础测试、通用检测、CCMax 和 KVV 结果会写入 SQLite 历史记录，可按模型、渠道、提示词、类型和状态搜索。历史详情保留脱敏配置、输出、错误、检测证据和媒体引用，不会保存 API Key；本地媒体受大小限制，远程媒体只保存脱敏后的 URL。
+
+报告和历史不是“成功即可信”的证明。分享报告前请检查响应正文、提示词和媒体中是否包含业务数据；不要把 API Key、登录配置、真实报告、日志或截图提交到 Git。
+
+## 服务器部署
+
+生产环境应让 Python 后端继续只监听 `127.0.0.1`，通过独立 HTTPS 反向代理对外提供访问，并使用独立端口隔离已有项目。当前部署说明采用：
+
+| 项目 | 默认设置 |
+| --- | --- |
+| 代码目录 | `/opt/xiaoxiao-workbench` |
+| 后端 | `127.0.0.1:18878` |
+| 外部 HTTPS 入口 | `18877` |
+| 服务用户 | `xxworkbench` |
+| 历史数据库 | `/var/lib/xiaoxiao-workbench/data/workbench.sqlite3` |
+| 报告目录 | `/var/lib/xiaoxiao-workbench/reports` |
+
+完整的 Nginx 隔离、登录会话、证书、systemd、备份和健康检查要求见 [服务器部署说明](docs/server-deployment.md)。部署时不要把后端改成公开无登录接口，不要重启其他项目的 Nginx 或 systemd 服务；仅维护 `xiaoxiao-workbench` 和 `xiaoxiao-gateway` 单元。
+
+## 开发与验证
+
+前端源码位于 `multimodal-workbench/`，根目录单文件由构建脚本生成：
 
 ```bash
 python3 multimodal-workbench/build.py
 ```
 
-前端测试需要 Node.js 20+：
+Node.js 20+ 的离线和 UI 回归测试：
 
 ```bash
 npm ci
@@ -102,16 +142,23 @@ npm test
 npm run test:choices
 npm run test:acceptance
 npm run test:workflows
+npm run test:history
 ```
 
-UI 测试默认使用 Playwright 浏览器；也可以通过 `CHROME_PATH` 指定已有 Chromium / Chrome，通过 `PLAYWRIGHT_MODULE` 指定已有 Playwright 模块。测试使用本地模拟接口，不需要真实渠道密钥。
-
-安装完整工作台依赖后，可运行后端离线测试：
+安装后端依赖后，可以运行 Python 服务测试：
 
 ```bash
 integrations/.venv/bin/python -m unittest discover -s integrations -p 'test_*.py'
 ```
 
-依赖本机历史报告的回归在没有对应报告时会跳过。
+测试使用本地模拟接口，不需要真实渠道密钥。第三方来源和许可证说明见 [THIRD_PARTY.md](THIRD_PARTY.md)，操作细节见 [multimodal-workbench/使用说明.txt](multimodal-workbench/使用说明.txt)。
 
-更多操作说明见 [使用说明](multimodal-workbench/使用说明.txt)，第三方来源见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+## 目录结构
+
+```text
+multimodal-workbench/          前端源码、协议引擎、场景提示词、UI 测试
+integrations/                  本地验收服务、CCMax 检测器、KVV 适配器、报告与历史
+scripts/                       KVV 固定版本准备与离线校验
+docs/                          服务器隔离部署说明
+中转站测试工具-多模态版.html     可直接打开的单文件版本
+```

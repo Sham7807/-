@@ -336,6 +336,18 @@ test('JSON parameter overrides are applied without corrupting prototypes', async
   assert.equal({}.injected, undefined);
 });
 
+test('JSON reference image requests accept one or many remote URLs and custom model bodies', async () => {
+  const { engine } = harness();
+  const images = ['https://images.example/one.jpg', 'https://images.example/two.jpg'];
+  const spec = await engine.build(config('relay-image-json', {
+    model: 'gemini-3.1-flash-image-preview',
+    prompt: 'blend the references',
+    extra: { model: 'gemini-3.1-flash-image-preview', aspect_ratio: '16:9', image: images, response_format: 'url', size: '4k' },
+  }));
+  assert.equal(new URL(spec.url).pathname, '/v1/images/generations');
+  assert.deepEqual(bodyOf(spec), { model: 'gemini-3.1-flash-image-preview', prompt: 'blend the references', aspect_ratio: '16:9', image: images, response_format: 'url', size: '4k' });
+});
+
 test('binary speech output becomes a playable object URL', async () => {
   const { engine, calls } = harness([
     new Response(new Uint8Array([73, 68, 51, 4, 0, 0]), { headers: { 'Content-Type': 'audio/mpeg' } }),

@@ -108,8 +108,8 @@ class ServiceTests(unittest.TestCase):
                     if result['status']!='running':break
                     time.sleep(.03)
                 self.assertEqual(result['status'],'completed')
-                self.assertEqual(result['completed'],4)
-                self.assertEqual(len(result['result']['checks']),8)
+                self.assertEqual(result['completed'],9)
+                self.assertEqual(len(result['result']['checks']),12)
                 for artifact in ['report.html','report.json','evidence.zip']:
                     response=client.get(url+'/api/runs/'+run+'/'+artifact,headers=headers)
                     self.assertEqual(response.status_code,200)

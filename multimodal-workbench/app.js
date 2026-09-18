@@ -5,7 +5,7 @@ let lastPresetId=null,modelAdvice=null;
 let kind='text',records=[],logs=[],controller=null,busy=false,timer=null,inputUrls=[],drafts={},fileDrafts={},referenceFiles=[],legacyLoaded=false;
 let progressState=null;
 const secrets=new Set(),localMediaUrls=new Set(),historyTasks=new Map();
-const draftIds=['preset','model','prompt','size','duration','resolution','voice','format','speed','language','path','auth','timeout','pollInterval','pollPath','contentPath','pollTimeout','extra','batch','imageMode'];
+const draftIds=['preset','model','prompt','size','duration','resolution','voice','format','speed','language','path','auth','timeout','pollInterval','pollPath','contentPath','pollTimeout','extra','batch','imageMode','imageUrls'];
 const initialFieldValues=Object.fromEntries(draftIds.map(id=>[id,$(id).value]));
 const E=window.MediaEngine;
 let modelCatalog=[],modelCatalogLoaded=false,modelFetchState='idle',modelFetchError='',modelFetchEpoch=0,modelFetchController=null,modelActiveIndex=-1;
@@ -217,9 +217,10 @@ function updateFields(){
   $('resolutionHint').textContent=/seedance/i.test($('model').value)?'部分 Seedance 渠道要求此项；请选择渠道支持的值，如 720p 或 1080p。':'独立于画面尺寸；可填写渠道支持的自定义值。';
   document.querySelectorAll('.video-only').forEach(el=>el.hidden=kind!=='video');
   $('fileGroup').hidden=!acceptsReferenceFiles();
+  const urlMode=p.id==='relay-image-json';$('imageUrlGroup').hidden=kind!=='image'||!urlMode;
   const supportsImages=['openai-image-edit','relay-image-json','gemini-image','openai-chat','openai-responses','anthropic','gemini','doubao-video'].includes(p.id);
   $('files').accept=audioChat?'.wav,.mp3,audio/wav,audio/mpeg':transcribe?'audio/*,video/mp4,video/webm':'image/*';$('files').multiple=kind==='text'||supportsImages;
-  $('fileLabel').textContent=audioChat?'音频输入（可选）':transcribe?'上传音频（必选)':edit?'原始图片（可多张）':kind==='video'?'参考图片（可选）':p.id==='relay-image-json'?'参考图片（可多图）':'参考图片（可选）';
+  $('fileLabel').textContent=audioChat?'音频输入（可选）':transcribe?'上传音频（必选)':edit?'原始图片（可多张）':kind==='video'?'参考图片（可选）':p.id==='relay-image-json'?'参考图片（可多图，也可用 URL）':'参考图片（可选）';
   $('fileHint').textContent=audioChat?'支持上传 WAV / MP3，也可只输入文本，测试模型的音频回答。':transcribe?'选择待转写 / 翻译的音频；文件大小限制由渠道决定。':supportsImages?'可继续添加图片；缩略图下方可调整顺序或移除。':'文件随本次请求上传至你配置的渠道。';
   $('promptLabel').textContent=(speech||geminiSpeech)?'朗读文本':transcribe?'转写提示词（可选）':'测试提示词';
   const count=($('batch').value.trim()?$('batch').value.split(/[,，\s]+/).filter(Boolean):[$('model').value.trim()].filter(Boolean)).length||1;$('runHint').textContent=`将向当前渠道提交 ${count} 次${transcribe?'识别':'生成'}请求，按渠道规则计费。`;
@@ -260,10 +261,56 @@ function updateCoverage(){
   $('coverageLimit').textContent='未测：模型真实身份、计费准确性、长期稳定性与内容质量。流式、参数、上下文和并发等专项检查，请在「文本模型」中选择「深度检测」。';
 }
 function diagnoseResult(r){
-  let message='',advice=null;
-  const error=String(r.error||'');
+  let message='',advice=null,guidance=[];
+  const error=String(r.error||'').trim();
+  const requests=Array.isArray(r.requests)?r.requests:[];
+  const lastRequest=requests.length?requests[requests.length-1]:null;
+  const httpStatus=Number(lastRequest?.status);
+  const hasHttpStatus=Number.isInteger(httpStatus)&&httpStatus>0;
+  const lower=error.toLowerCase();
+  const networkFailure=/failed to fetch|networkerror|load failed|cors|跨域|dns|econnrefused|enotfound|socket hang up|connection reset|network request failed/i.test(error)
+    || (!!requests.length&&requests.every(item=>item?.status===null||item?.status===undefined));
+  const mixed=location.protocol==='https:'&&/^http:/i.test(String(r.config?.base||''));
+  if(networkFailure){
+    message='错误类型：浏览器网络请求失败（Failed to fetch）。';
+    const evidence=requests.length
+      ? `证据：已记录 ${requests.length} 次请求，但没有收到可读的 HTTP 状态码。`
+      : '证据：浏览器在收到 HTTP 响应前中断了请求。';
+    guidance=[
+      evidence,
+      '可能原因：'+(mixed
+        ?'当前工作台使用 HTTPS，而渠道地址使用 HTTP，浏览器按混合内容策略拦截了请求。'
+        :'渠道没有返回可读的 HTTP 响应；常见原因是 CORS 未放行、OPTIONS 预检失败、域名 / DNS / TLS 不可达、端口被防火墙拦截，或提交路径被网关拒绝。'),
+      '解决方法：先在同一浏览器打开渠道地址确认网络可达；让渠道允许当前工作台 Origin 的 POST 和 OPTIONS，并在响应中开放 Authorization、Content-Type；统一使用 HTTPS，核对 Base URL、提交路径、鉴权方式和模型 ID。渠道不支持浏览器跨域时，请改用服务端代理或同源网关。'
+    ];
+  }else if(/timeout|timed out|超时/i.test(lower)||r.error?.name==='TimeoutError'){
+    message='错误类型：请求超过了本页设置的超时时间。';
+    guidance=[
+      requests.length?`证据：最近一次请求已等待，已记录 ${requests.length} 次请求。`:'证据：未收到完整响应。',
+      '可能原因：渠道排队、上游生成耗时过长，或网络连接在等待期间中断。视频等异步任务还可能已经提交成功，只是查询超时。',
+      '解决方法：先查看请求日志和任务 ID；确认渠道服务状态后适当增大“单次请求超时”或“最多等待视频”，再使用“继续查询”而不是重复生成。'
+    ];
+  }else if(hasHttpStatus&&httpStatus>=400&&!/UpstreamError|upstream call failed|fail_to_fetch_task/i.test(error)){
+    const statusHint=httpStatus===401||httpStatus===403
+      ?'鉴权失败：API Key 无效、已过期，或鉴权方式 / 请求来源不被渠道接受。'
+      :httpStatus===404
+        ?'地址或模型不存在：提交路径、Base URL 版本、查询路径或模型 ID 可能不匹配。'
+        :httpStatus===408||httpStatus===429
+          ?'渠道暂时无法及时处理：可能是请求超时、限流、余额 / 配额不足或上游排队。'
+          :httpStatus===413||httpStatus===415||httpStatus===422
+            ?'请求体不符合渠道约束：可能是字段、格式、文件大小、图片数量或模型能力不支持。'
+            :httpStatus>=500
+              ?'渠道或上游服务发生错误，通常需要结合渠道日志和 Request ID 排查。'
+              :'渠道明确拒绝了请求，需要按返回的错误字段核对协议和参数。';
+    message=`错误类型：渠道返回 HTTP ${httpStatus}。`;
+    guidance=[
+      `证据：最近一次请求收到 HTTP ${httpStatus}${error?'，页面已保留返回的错误详情。':'。'} `,
+      '可能原因：'+statusHint,
+      '解决方法：展开“查看原始响应与请求记录”，按 error.message / code 修正；重点核对模型 ID、接口路径、鉴权方式、请求体字段和文件格式。401/403 先更新密钥，429 先降低频率并检查配额，5xx 需要联系渠道方核对上游日志。'
+    ];
+  }
   if(r.kind==='video'&&/resolution/i.test(error)&&/missing|required|缺少|必填/i.test(error)){
-    const box=node('div','diagnostic');box.append(node('p','','渠道拒绝了请求：缺少视频分辨率 resolution。画面尺寸 size 不能代替此字段。请在左侧「视频分辨率」选择渠道支持的值（例如 720p、1080p），再手动开始测试。'));
+    const box=node('div','diagnostic');box.append(node('p','diagnostic-title','错误类型：渠道拒绝了请求，缺少视频分辨率 resolution。'),node('p','','画面尺寸 size 不能代替此字段。请在左侧「视频分辨率」选择渠道支持的值（例如 720p、1080p），再手动开始测试。'));
     if(kind==='video'&&['relay-video-json','doubao-video','custom-video'].includes($('preset').value)){
       const btn=node('button','text-button','填写视频分辨率 →');btn.type='button';btn.dataset.action='configure-resolution';
       btn.addEventListener('click',()=>{if(busy)return;if(kind!=='video'||!['relay-video-json','doubao-video','custom-video'].includes($('preset').value)){notify('请在视频模型中选择对应的 JSON 协议，再填写视频分辨率。');return;}$('resolution').scrollIntoView({behavior:'smooth',block:'center'});$('resolution').focus({preventScroll:true});notify('请按渠道文档选择视频分辨率。尚未重新提交请求。');});box.append(btn);
@@ -271,18 +318,34 @@ function diagnoseResult(r){
     return box;
   }else if(/UpstreamError|upstream call failed|fail_to_fetch_task/i.test(error)){
     const id=error.match(/Request ID\s*:\s*([a-zA-Z0-9_-]+)/i)?.[1];
-    message='请求已到达中转站，但中转站调用上游失败。请按'+(id?' Request ID '+id:'请求时间')+' 查询中转站 / 上游日志，核对服务状态、模型映射与参数。仅凭这条响应无法确定具体原因。'+(r.taskId?'已有任务 ID，可核对任务状态后继续查询。':'本次响应未提供任务 ID；请先核对渠道任务记录与计费，再决定是否重新生成。');
+    message='错误类型：请求已到达中转站，但中转站调用上游失败。';
+    guidance=[
+      '证据：'+(id?'响应包含 Request ID '+id+'，可用于定位本次上游调用。':'响应未提供 Request ID，请使用测试时间和模型 ID 查询渠道日志。'),
+      '可能原因：上游服务异常、模型映射错误、渠道余额 / 配额不足，或请求参数被上游拒绝。',
+      '解决方法：按'+(id?' Request ID '+id:'请求时间')+'查询中转站 / 上游日志，核对服务状态、模型映射与参数。'+(r.taskId?'已有任务 ID，可核对任务状态后继续查询。':'本次响应未提供任务 ID；先确认是否已产生计费，再决定是否重新生成。')
+    ];
   }else if(r.kind==='video'&&/unmarshal|invalid character|json.*(?:parse|decode)/i.test(error)&&r.config?.preset==='openai-video'){
     message='渠道可能在按 JSON 解码 multipart 表单。可换用「中转站 · Videos（JSON）」；模型是否支持视频仍需单独确认。';advice={kind:'video',preset:'relay-video-json',name:'中转站 JSON 视频协议'};
   }else if(r.kind==='video'&&/404|Invalid URL/i.test(error)&&r.config?.preset==='doubao-video'){
     message='该渠道没有提供火山方舟原生任务路径。可改用中转站 JSON 协议，并按渠道文档核对提交与查询路径。';advice={kind:'video',preset:'relay-video-json',name:'中转站 JSON 视频协议'};
-  }else if(r.kind==='audio'){
+  }else if(!message&&r.kind==='audio'){
     const suggested=recommendModel(r.model);if(suggested&&suggested.kind==='audio'&&suggested.preset!==r.config?.preset){message=suggested.note;advice=suggested;}
     else if(/voice|speaker|音色/i.test(error))message='渠道拒绝了音色参数。不同模型支持的音色不同，请填写该模型文档中的 voice / 音色名称。';
     else if(/404|Invalid URL|not found/i.test(error))message='当前音频路径或模型不存在。语音合成、转写、音频对话和 Gemini TTS 使用不同接口，请按渠道文档选择协议。';
     else message='音频接口、音色和返回格式因模型而异。请核对模型类型；下方原始响应保留了渠道错误详情。';
   }
-  if(!message)return null;const box=node('div','diagnostic');box.append(node('p','',message));
+  if(r.kind==='image'&&/400|401|403|404|422|invalid|unsupported|model|parameter|image/i.test(error)){
+    message='错误类型：图片接口或参数被渠道拒绝。';
+    guidance=['可能原因：模型 ID、接口路径、鉴权方式或请求体字段与渠道协议不匹配；图生图还可能是 image URL 过期、渠道无法抓取外链、图片格式 / 数量 / 尺寸不符合限制。','解决方法：展开“查看原始响应与请求记录”，先按 HTTP 状态和 error.message 修正；图生图请选择“中转站 · 参考图生成（JSON）”，把每个 URL 放入“参考图片 URL”（每行一个），或在附加 JSON 中完整填写 image 数组，并确认模型文档要求的 aspect_ratio、size、response_format 和提交路径。'];
+  }
+  if(!message&&error){
+    message='错误类型：请求失败，暂时无法自动归类。';
+    guidance=[
+      '可能原因：渠道返回了无法识别的错误，或浏览器 / 网关在请求过程中中断了连接。',
+      '解决方法：展开“查看原始响应与请求记录”，根据 HTTP 状态、error.message、请求路径和模型 ID 排查；修正配置后再重试。'
+    ];
+  }
+  if(!message)return null;const box=node('div','diagnostic');box.append(node('p','diagnostic-title',message));guidance.forEach(item=>box.append(node('p','',item)));
   if(advice){const btn=node('button','text-button','载入'+advice.name);btn.addEventListener('click',()=>applyRecommendation(advice,r.model));box.append(btn);}
   return box;
 }
@@ -314,7 +377,13 @@ function getConfig(model){
   const key=$('key').value.trim();if(key)secrets.add(key);
   let extra;try{extra=JSON.parse($('extra').value.trim()||'{}');}catch{throw new Error('附加参数不是有效 JSON，请检查逗号和引号。');}
   if(!extra||typeof extra!=='object'||Array.isArray(extra))throw new Error('附加参数必须是 JSON 对象。');
-  if(Object.prototype.hasOwnProperty.call(extra,'model'))throw new Error('请在模型名称或批量模型中填写模型，不要在附加参数里覆盖 model，以免测试记录标注错误。');
+  if(Object.prototype.hasOwnProperty.call(extra,'model')&&(typeof extra.model!=='string'||!extra.model.trim()))throw new Error('附加 JSON 中的 model 必须是非空字符串。');
+  const imageUrls=$('imageUrls').value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
+  if(imageUrls.length){
+    if($('preset').value!=='relay-image-json')throw new Error('图片 URL 需要选择「中转站 · 参考图生成（JSON）」协议。');
+    if(Object.prototype.hasOwnProperty.call(extra,'image'))throw new Error('已填写参考图片 URL，请移除附加 JSON 中的 image 字段，避免重复发送。');
+    extra.image=imageUrls.length===1?imageUrls[0]:imageUrls;
+  }
   if(!model)throw new Error('请填写模型名称。');
   if(!$('base').value.trim())throw new Error('请填写渠道地址。');
   if($('auth').value!=='none'&&!key)throw new Error('请填写 API Key。');
@@ -546,9 +615,12 @@ async function exportReport(){
     const mediaHTML=async m=>{let url=visibleMediaUrl(m);if(!url)return '<p class="muted">该媒体地址包含会话密钥或不适合预览，未写入报告。</p>';
       if(url.startsWith('blob:')){const blob=await fetch(url).then(r=>r.blob());url=await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result);f.onerror=reject;f.readAsDataURL(blob);});}
       const safe=escapeHtml(url),tag=m.kind==='image'?'img':m.kind==='video'?'video':'audio';return `<figure><${tag} src="${safe}" ${tag==='img'?'alt="生成图片" referrerpolicy="no-referrer"':'controls preload="metadata"'}>${tag==='img'?'':`</${tag}>`}<figcaption><a href="${safe}" target="_blank" rel="noopener noreferrer">打开媒体 ↗</a></figcaption></figure>`;};
-    let content='';for(const r of reportRecords){const media=await Promise.all((r.media||[]).map(mediaHTML));content+=`<article><h2>${escapeHtml(r.model)} <small>${escapeHtml(({demo:'本地演示',success:'已返回结果',pending:'等待完成',stopped:'已停止',error:'请求失败',unrecognized:'需检查响应'})[r.status]||r.status)}</small></h2><p class="muted">${escapeHtml(r.preset)} · ${escapeHtml(new Date(r.createdAt).toLocaleString('zh-CN'))} · ${((r.elapsedMs||0)/1000).toFixed(2)}s · ${r.requests?.length||0} 次 HTTP 请求</p>${r.taskId?`<p>任务 ID：${escapeHtml(r.taskId)}</p>`:''}${r.error?`<pre class="error">${escapeHtml(scrub(r.error))}</pre>`:''}${r.text?`<pre>${escapeHtml(scrub(r.text))}</pre>`:''}<div class="media">${media.join('')}</div><details><summary>请求配置、原始响应与请求记录</summary><pre>${escapeHtml(JSON.stringify(scrub({config:r.config,response:r.raw,requests:r.requests},true),null,2))}</pre></details></article>`;}
-    const report=`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>小小宇宙无敌 · 渠道测试报告</title><style>body{font:14px/1.7 -apple-system,"PingFang SC",sans-serif;background:#f4f7f7;color:#20353c;margin:0;padding:35px 18px}.wrap{max-width:1000px;margin:auto}h1{font-size:28px}h2{font-size:18px;overflow-wrap:anywhere}h2 small{font-size:11px;color:#087f76;background:#e6f4ef;padding:5px 8px;border-radius:5px}.muted{font-size:12px;color:#7c8d94}article{background:white;padding:24px;border:1px solid #e1e8e9;border-radius:13px;margin:20px 0}.media{display:flex;flex-wrap:wrap;gap:15px}figure{margin:0;max-width:100%;flex:1 1 280px}img,video{width:100%;max-height:540px;object-fit:contain;border-radius:8px}audio{width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.8 ui-monospace,monospace;background:#f5f8f8;padding:14px;border-radius:8px;max-height:500px;overflow:auto}details{margin-top:18px}summary{cursor:pointer;font-size:12px;color:#5f787f}a{color:#087f76;font-size:12px}.error{color:#a93636}</style></head><body><div class="wrap"><h1>小小宇宙无敌 · 多模态渠道测试报告</h1><p class="muted">${escapeHtml(new Date().toLocaleString('zh-CN'))} · ${reportRecords.length} 条记录 · API Key 已隐藏</p><p class="muted">报告包含实际返回内容与演示标记。生成成功不代表质量合格；远程媒体链接可能过期。浏览器内接收的二进制文件已嵌入报告。</p>${content}<article><h2>请求日志</h2><pre>${escapeHtml(scrub(reportLogs.map(l=>`[${l.time}] ${l.message}`).join('\n')))}</pre></article></div></body></html>`;
-    downloadBlob(new Blob([report],{type:'text/html;charset=utf-8'}),'渠道测试报告-'+new Date().toISOString().slice(0,10)+'.html');notify('报告已导出，浏览器接收的媒体已嵌入；远程链接仍受渠道有效期限制。');
+    let content='';for(const r of reportRecords){const media=await Promise.all((r.media||[]).map(mediaHTML));const diagnostic=r.error?diagnoseResult(r):null;const diagnosticHtml=diagnostic?`<section class="diagnostic-report"><h3>错误诊断与处理建议</h3>${[...diagnostic.querySelectorAll('p')].map(item=>`<p>${escapeHtml(item.textContent)}</p>`).join('')}</section>`:'';content+=`<article><h2>${escapeHtml(r.model)} <small>${escapeHtml(({demo:'本地演示',success:'已返回结果',pending:'等待完成',stopped:'已停止',error:'请求失败',unrecognized:'需检查响应'})[r.status]||r.status)}</small></h2><p class="muted">${escapeHtml(r.preset)} · ${escapeHtml(new Date(r.createdAt).toLocaleString('zh-CN'))} · ${((r.elapsedMs||0)/1000).toFixed(2)}s · ${r.requests?.length||0} 次 HTTP 请求</p>${r.taskId?`<p>任务 ID：${escapeHtml(r.taskId)}</p>`:''}${r.error?`<pre class="error">${escapeHtml(scrub(r.error))}</pre>`:''}${diagnosticHtml}${r.text?`<pre>${escapeHtml(scrub(r.text))}</pre>`:''}<div class="media">${media.join('')}</div><details><summary>请求配置、原始响应与请求记录</summary><pre>${escapeHtml(JSON.stringify(scrub({config:r.config,response:r.raw,requests:r.requests},true),null,2))}</pre></details></article>`;}
+    const report=`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>小小宇宙无敌 · 渠道测试报告</title><style>body{font:14px/1.7 -apple-system,"PingFang SC",sans-serif;background:#f4f7f7;color:#20353c;margin:0;padding:35px 18px}.wrap{max-width:1000px;margin:auto}h1{font-size:28px}h2{font-size:18px;overflow-wrap:anywhere}h2 small{font-size:11px;color:#087f76;background:#e6f4ef;padding:5px 8px;border-radius:5px}.muted{font-size:12px;color:#7c8d94}article{background:white;padding:24px;border:1px solid #e1e8e9;border-radius:13px;margin:20px 0}.media{display:flex;flex-wrap:wrap;gap:15px}figure{margin:0;max-width:100%;flex:1 1 280px}img,video{width:100%;max-height:540px;object-fit:contain;border-radius:8px}audio{width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.8 ui-monospace,monospace;background:#f5f8f8;padding:14px;border-radius:8px;max-height:500px;overflow:auto}details{margin-top:18px}summary{cursor:pointer;font-size:12px;color:#5f787f}a{color:#087f76;font-size:12px}.error{color:#a93636}.diagnostic-report{border:1px solid #ecdcb8;border-radius:10px;background:#fffbf1;color:#7e692f;padding:14px;margin:15px 0}.diagnostic-report h3{font-size:14px;margin:0 0 8px;color:#715b25}.diagnostic-report p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div class="wrap"><h1>小小宇宙无敌 · 多模态渠道测试报告</h1><p class="muted">${escapeHtml(new Date().toLocaleString('zh-CN'))} · ${reportRecords.length} 条记录 · API Key 已隐藏</p><p class="muted">报告包含实际返回内容与演示标记。生成成功不代表质量合格；远程媒体链接可能过期。浏览器内接收的二进制文件已嵌入报告。</p>${content}<article><h2>请求日志</h2><pre>${escapeHtml(scrub(reportLogs.map(l=>`[${l.time}] ${l.message}`).join('\n')))}</pre></article></div></body></html>`;
+    const models=[...new Set(reportRecords.map(record=>String(record.model||'未命名模型').trim()).filter(Boolean))];
+    const modelPart=(models.join('、')||'未命名模型').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'-').replace(/\s+/g,' ').slice(0,80)||'未命名模型';
+    const now=new Date(),pad=value=>String(value).padStart(2,'0'),stamp=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    downloadBlob(new Blob([report],{type:'text/html;charset=utf-8'}),`测试报告-${modelPart}-${stamp}.html`);notify('报告已导出，浏览器接收的媒体已嵌入；远程链接仍受渠道有效期限制。');
   }catch(e){notify('导出失败：'+e.message,true);}finally{setBusy(false);}
 }
 function clearResults(){

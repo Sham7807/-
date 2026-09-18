@@ -56,6 +56,7 @@
 <div class="form-group" data-option="language"><label for="language">转写语言（可选）</label><input id="language" placeholder="如 zh、en；留空自动识别"></div>
 </div>
 <div class="form-group" id="fileGroup"><label for="files"><span id="fileLabel">参考图片（可选）</span><button id="clearFilesBtn" type="button" class="text-button">清空附件</button></label><div class="upload-area" id="uploadArea"><span>＋</span><input id="files" type="file" accept="image/*" multiple><small id="fileHint">选择或拖入图片，可继续添加</small></div><small id="fileSummary" role="status"></small><div id="inputPreview" class="input-preview"></div></div>
+<div class="form-group image-url-group" id="imageUrlGroup" hidden><label for="imageUrls">参考图片 URL <span>每行一个</span></label><textarea id="imageUrls" class="mono" rows="4" spellcheck="false" placeholder="https://example.com/reference-1.jpg&#10;https://example.com/reference-2.jpg"></textarea><small>选择「中转站 · 参考图生成（JSON）」时，会按顺序写入请求体的 <code>image</code> 字段；也可以直接在附加 JSON 中自定义完整 image 数组。</small></div>
 <div id="parkedFiles" class="protocol-note" hidden></div>
 </div><details class="advanced"><summary>接口与高级参数 <span>可选</span></summary><div class="advanced-body">
 <div class="form-group"><label for="path">提交接口路径</label><input id="path" class="mono" spellcheck="false"></div>
@@ -64,7 +65,7 @@
 <div class="form-group video-only"><label for="pollPath">任务查询路径</label><input id="pollPath" class="mono" placeholder="/v1/videos/{id}"><small>{id} 会自动替换为任务 ID。</small></div>
 <div class="form-group video-only"><label for="contentPath">成品下载路径（可选）</label><input id="contentPath" class="mono" placeholder="/v1/videos/{id}/content"><small>用于完成后通过当前渠道鉴权获取视频。</small></div>
 <div class="form-group video-only"><label for="pollTimeout">最多等待视频（秒）</label><input id="pollTimeout" type="number" min="5" max="7200" value="600"></div>
-<div class="form-group"><label for="extra">附加请求参数 <span>JSON 对象</span></label><textarea id="extra" class="mono" rows="5" spellcheck="false" placeholder='{"quality": "high"}'>{}</textarea><small>顶层合并并覆盖默认请求体（model 请用上方模型字段）。复杂嵌套字段请填写完整对象。</small></div>
+<div class="form-group"><label for="extra">附加请求参数 <span>JSON 对象</span></label><textarea id="extra" class="mono" rows="5" spellcheck="false" placeholder='{"quality": "high"}'>{}</textarea><small>顶层合并并覆盖默认请求体，可包含 model、aspect_ratio、image 等渠道自定义字段；复杂嵌套字段请填写完整对象。报告中的测试模型仍以模型字段为准。</small></div>
 <div class="form-group"><label for="batch">批量模型（可选）</label><textarea id="batch" rows="2" placeholder="model-a, model-b"></textarea><small>同一协议按顺序测试，每个模型提交一次；不同协议请分开测试。</small></div>
 </div></details>
 <div class="resume-box video-only"><label for="taskId">已有视频任务 ID</label><div class="input-action"><input id="taskId" placeholder="输入 ID 可继续查询"><button id="resumeBtn" type="button">继续查询</button></div><small>只查询已有任务，不会重新生成视频。</small></div>
